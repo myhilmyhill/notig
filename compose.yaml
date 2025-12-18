@@ -1,0 +1,12 @@
+services:
+  git-http:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    user: 1000:1000
+    ports:
+      - "8081:80"
+    volumes:
+      - ./data/repos:/data/repos
+      - ./public:/usr/share/nginx/html:ro
+    restart: unless-stopped

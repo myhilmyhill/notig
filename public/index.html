@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>notig</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script src="https://unpkg.com/@isomorphic-git/lightning-fs"></script>
+    <script src="https://unpkg.com/isomorphic-git"></script>
+    <script type="module" src="./app.js"></script>
+
+</head>
+  <body>
+    <header>
+      <h1>notig</h1>
+      <div id="sync-status">offline</div>
+      <button id="new-note">New</button>
+      <button id="push-notes">Push</button>
+      <button id="pull-notes">Pull</button>
+    </header>
+    <main>
+      <aside id="sidebar">
+        <ul id="note-list"></ul>
+      </aside>
+      <section id="editor">
+        <input id="note-title" placeholder="Title" />
+        <textarea id="note-body" placeholder="Write your note..." rows="16"></textarea>
+        <div class="actions">
+          <button id="save-note">Save &amp; Commit</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
