@@ -115,15 +115,34 @@ main {
 }
 
 #note-body {
+  display: none;
   padding: 12px;
   border-radius: 8px;
   border: 1px solid #1f2937;
   background: #0b1220;
   color: #e2e8f0;
   resize: vertical;
+  min-height: 420px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  line-height: 1.5;
+}
+
+#editor-host {
+  min-height: 420px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.plain-text #editor-host {
+  display: none;
+}
+
+body.plain-text #note-body {
+  display: block;
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }

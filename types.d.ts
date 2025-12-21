@@ -29,3 +29,12 @@ declare module 'https://esm.sh/isomorphic-git@beta/http/web' {
   const http: unknown;
   export default http;
 }
+
+declare module 'https://esm.sh/@toast-ui/editor@3.2.2' {
+  export class Editor {
+    constructor(options: Record<string, unknown>);
+    getMarkdown(): string;
+    setMarkdown(markdown: string): void;
+    destroy(): void;
+  }
+}

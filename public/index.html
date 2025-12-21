@@ -1,33 +1,41 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>notig</title>
-    <link rel="stylesheet" href="./style.css" />
-    <script type="module" src="./app.js"></script>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>notig</title>
+  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@toast-ui/editor@3.2.2/dist/toastui-editor.min.css" />
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@toast-ui/editor@3.2.2/dist/theme/toastui-editor-dark.css" />
+  <script type="module" src="./app.js"></script>
 
 </head>
-  <body>
-    <header>
-      <h1>notig</h1>
-      <div id="sync-status">offline</div>
-      <button id="clone">Clone</button>
-      <button id="delete">Delete</button>
-      <button id="new-note">New</button>
-      <button id="push-notes">Push</button>
-      <button id="pull-notes">Pull</button>
-    </header>
-    <main>
-      <aside id="sidebar">
-        <ul id="note-list"></ul>
-      </aside>
-      <section id="editor">
-        <textarea id="note-body" placeholder="Write your note..." rows="16"></textarea>
-        <div class="actions">
-          <button id="save-note">Save &amp; Commit</button>
-        </div>
-      </section>
-    </main>
-  </body>
+
+<body>
+  <header>
+    <h1>notig</h1>
+    <div id="sync-status">offline</div>
+    <button id="clone">Clone</button>
+    <button id="delete">Delete</button>
+    <button id="new-note">New</button>
+    <button id="push-notes">Push</button>
+    <button id="pull-notes">Pull</button>
+  </header>
+  <main>
+    <aside id="sidebar">
+      <ul id="note-list"></ul>
+    </aside>
+    <section id="editor">
+      <div id="editor-host" aria-label="Markdown editor"></div>
+      <textarea id="note-body" aria-label="Plain text editor"></textarea>
+      <div class="actions">
+        <button id="toggle-plain" type="button">Plain Text</button>
+        <button id="save-note">Save &amp; Commit</button>
+      </div>
+    </section>
+  </main>
+</body>
+
 </html>

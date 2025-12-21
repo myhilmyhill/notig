@@ -3,13 +3,14 @@ import LightningFS from 'https://esm.sh/@isomorphic-git/lightning-fs';
 import * as git from 'https://esm.sh/isomorphic-git@beta';
 import http from 'https://esm.sh/isomorphic-git@beta/http/web';
 import { Buffer } from 'https://esm.sh/buffer@6.0.3';
+import { Editor } from 'https://esm.sh/@toast-ui/editor@3.2.2';
 
 if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
 }
 
 /** @typedef {{id: string; body: string}} Note */
-/** @typedef {{frontMatter: Record<string, string | string[]>; content: string}} ParsedNote */
+/** @typedef {{frontMatter: Record<string, string | string[]>; frontMatterRaw: string | null; content: string}} ParsedNote */
 
 const fs = new LightningFS('notig-fs');
 const pfs = fs.promises;
@@ -43,6 +44,8 @@ const statusEl = getRequiredElement('sync-status');
 const listEl = getRequiredElement('note-list');
 /** @type {HTMLTextAreaElement} */
 const bodyEl = getRequiredElement('note-body');
+/** @type {HTMLDivElement} */
+const editorHostEl = getRequiredElement('editor-host');
 /** @type {HTMLButtonElement} */
 const saveBtn = getRequiredElement('save-note');
 /** @type {HTMLButtonElement} */
@@ -55,11 +58,19 @@ const cloneBtn = getRequiredElement('clone');
 const deleteBtn = getRequiredElement('delete');
 /** @type {HTMLButtonElement} */
 const newBtn = getRequiredElement('new-note');
+/** @type {HTMLButtonElement} */
+const togglePlainBtn = getRequiredElement('toggle-plain');
 
 /** @type {Note[]} */
 let notes = [];
 /** @type {Note['id'] | null} */
 let currentId = null;
+/** @type {string | null} */
+let currentFrontMatterRaw = null;
+/** @type {Editor | null} */
+let editor = null;
+let isPlainText = false;
+const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 export function clone(options = {}) {
   const defaults = {
@@ -206,7 +217,7 @@ function parseFrontMatter(lines) {
 function parseNoteBody(body) {
   const lines = body.split(/\r?\n/);
   if (lines[0] !== '---') {
-    return { frontMatter: {}, content: body };
+    return { frontMatter: {}, frontMatterRaw: null, content: body };
   }
 
   let endIndex = -1;
@@ -218,12 +229,16 @@ function parseNoteBody(body) {
   }
 
   if (endIndex === -1) {
-    return { frontMatter: {}, content: body };
+    return { frontMatter: {}, frontMatterRaw: null, content: body };
   }
 
   const frontMatterLines = lines.slice(1, endIndex);
   const content = lines.slice(endIndex + 1).join('\n');
-  return { frontMatter: parseFrontMatter(frontMatterLines), content };
+  return {
+    frontMatter: parseFrontMatter(frontMatterLines),
+    frontMatterRaw: lines.slice(0, endIndex + 1).join('\n'),
+    content,
+  };
 }
 
 /**
@@ -261,6 +276,57 @@ function setActiveNoteInList() {
   items.forEach((item) => {
     item.classList.toggle('active', item.dataset.id === currentId);
   });
+}
+
+/**
+ * @param {string} body
+ * @param {string | null} frontMatterRaw
+ * @returns {string}
+ */
+function composeNoteBody(body, frontMatterRaw) {
+  if (!frontMatterRaw) return body;
+  if (!body) return `${frontMatterRaw}\n`;
+  return `${frontMatterRaw}\n${body}`;
+}
+
+/**
+ * @param {string} markdown
+ */
+function updateNoteBody(markdown) {
+  bodyEl.value = composeNoteBody(markdown, currentFrontMatterRaw);
+}
+
+function updateEditorModeUI() {
+  document.body.classList.toggle('plain-text', isPlainText);
+  togglePlainBtn.textContent = isPlainText ? 'WYSIWYG' : 'Plain Text';
+}
+
+/**
+ * @param {string} markdown
+ */
+function createEditor(markdown) {
+  if (editor) {
+    editor.destroy();
+  }
+  editor = new Editor({
+    el: editorHostEl,
+    height: '100%',
+    initialEditType: 'wysiwyg',
+    previewStyle: 'vertical',
+    usageStatistics: false,
+    hideModeSwitch: true,
+    theme: colorSchemeMedia.matches ? 'dark' : 'light',
+    events: {
+      change: () => {
+        if (!editor) return;
+        updateNoteBody(editor.getMarkdown());
+      },
+    },
+  });
+  editor.setMarkdown(markdown);
+  if (!isPlainText) {
+    updateNoteBody(markdown);
+  }
 }
 
 /**
@@ -390,6 +456,14 @@ function renderNotes() {
 async function openNote(note) {
   currentId = note.id;
   bodyEl.value = note.body;
+  const parsed = parseNoteBody(note.body);
+  currentFrontMatterRaw = parsed.frontMatterRaw;
+  if (editor) {
+    editor.setMarkdown(parsed.content ?? '');
+  }
+  if (!isPlainText) {
+    updateNoteBody(parsed.content ?? '');
+  }
   setActiveNoteInList();
 }
 
@@ -442,6 +516,10 @@ async function deleteCurrentNote() {
     await openNote(notes[0]);
   } else {
     bodyEl.value = '';
+    currentFrontMatterRaw = null;
+    if (editor) {
+      editor.setMarkdown('');
+    }
   }
 }
 
@@ -551,6 +629,41 @@ deleteBtn.addEventListener('click', () => {
     console.error(err);
     setStatus('delete failed');
   });
+});
+
+togglePlainBtn.addEventListener('click', () => {
+  isPlainText = !isPlainText;
+  if (isPlainText) {
+    updateEditorModeUI();
+    bodyEl.focus();
+    return;
+  }
+  const parsed = parseNoteBody(bodyEl.value);
+  currentFrontMatterRaw = parsed.frontMatterRaw;
+  if (editor) {
+    editor.setMarkdown(parsed.content ?? '');
+  }
+  updateNoteBody(parsed.content ?? '');
+  updateEditorModeUI();
+});
+
+bodyEl.addEventListener('input', () => {
+  if (!isPlainText) return;
+  const parsed = parseNoteBody(bodyEl.value);
+  currentFrontMatterRaw = parsed.frontMatterRaw;
+});
+
+createEditor('');
+updateEditorModeUI();
+
+colorSchemeMedia.addEventListener('change', () => {
+  const markdown = isPlainText
+    ? parseNoteBody(bodyEl.value).content
+    : editor
+        ? editor.getMarkdown()
+        : '';
+  createEditor(markdown);
+  updateEditorModeUI();
 });
 
 bootstrap().catch((err) => {
