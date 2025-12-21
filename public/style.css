@@ -78,11 +78,23 @@ main {
   border-radius: 8px;
   background: #111827;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 #note-list li.active {
   background: #1f2937;
   border: 1px solid #2563eb;
+}
+
+.note-title {
+  font-weight: 600;
+}
+
+.note-tags {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 #editor {

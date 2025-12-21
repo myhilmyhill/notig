@@ -9,6 +9,7 @@ if (!globalThis.Buffer) {
 }
 
 /** @typedef {{id: string; body: string}} Note */
+/** @typedef {{frontMatter: Record<string, string | string[]>; content: string}} ParsedNote */
 
 const fs = new LightningFS('notig-fs');
 const pfs = fs.promises;
@@ -148,6 +149,121 @@ function randomId() {
 }
 
 /**
+ * @param {string[]} lines
+ * @returns {Record<string, string | string[]>}
+ */
+function parseFrontMatter(lines) {
+  /** @type {Record<string, string | string[]>} */
+  const data = {};
+  /** @type {string | null} */
+  let listKey = null;
+
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+
+    const listMatch = line.match(/^\s*-\s+(.*)$/);
+    if (listMatch && listKey) {
+      const entry = listMatch[1].trim();
+      if (entry) {
+        /** @type {string[]} */ (data[listKey]).push(entry);
+      }
+      return;
+    }
+
+    const kvMatch = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!kvMatch) {
+      listKey = null;
+      return;
+    }
+
+    const key = kvMatch[1];
+    const value = kvMatch[2].trim();
+    if (!value) {
+      data[key] = [];
+      listKey = key;
+      return;
+    }
+
+    if (value.startsWith('[') && value.endsWith(']')) {
+      data[key] = value
+        .slice(1, -1)
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    } else {
+      data[key] = value;
+    }
+    listKey = null;
+  });
+
+  return data;
+}
+
+/**
+ * @param {string} body
+ * @returns {ParsedNote}
+ */
+function parseNoteBody(body) {
+  const lines = body.split(/\r?\n/);
+  if (lines[0] !== '---') {
+    return { frontMatter: {}, content: body };
+  }
+
+  let endIndex = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i] === '---') {
+      endIndex = i;
+      break;
+    }
+  }
+
+  if (endIndex === -1) {
+    return { frontMatter: {}, content: body };
+  }
+
+  const frontMatterLines = lines.slice(1, endIndex);
+  const content = lines.slice(endIndex + 1).join('\n');
+  return { frontMatter: parseFrontMatter(frontMatterLines), content };
+}
+
+/**
+ * @param {ParsedNote} parsed
+ * @returns {string}
+ */
+function getNoteTitle(parsed) {
+  if (typeof parsed.frontMatter.title === 'string') {
+    const title = parsed.frontMatter.title.trim();
+    if (title) return title;
+  }
+  const fallback = parsed.content
+    .split(/\r?\n/)
+    .find((line) => line.trim());
+  return fallback ? fallback.trim() : 'Untitled';
+}
+
+/**
+ * @param {ParsedNote} parsed
+ * @returns {string[]}
+ */
+function getNoteTags(parsed) {
+  const tags = parsed.frontMatter.tags;
+  if (Array.isArray(tags)) {
+    return tags.filter((tag) => typeof tag === 'string' && tag.trim());
+  }
+  if (typeof tags === 'string' && tags.trim()) {
+    return [tags.trim()];
+  }
+  return [];
+}
+
+function setActiveNoteInList() {
+  const items = listEl.querySelectorAll('li');
+  items.forEach((item) => {
+    item.classList.toggle('active', item.dataset.id === currentId);
+  });
+}
+
+/**
  * @param {unknown} err
  * @returns {string | undefined}
  */
@@ -242,9 +358,25 @@ async function saveNoteFile(note) {
 function renderNotes() {
   listEl.innerHTML = '';
   notes.forEach((note) => {
+    const parsed = parseNoteBody(note.body);
+    const title = getNoteTitle(parsed);
+    const tags = getNoteTags(parsed);
+
     const li = document.createElement('li');
-    li.textContent = note.body.split('\n')[0] || 'Untitled';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'note-title';
+    titleEl.textContent = title;
+    li.appendChild(titleEl);
+    if (tags.length) {
+      const tagsEl = document.createElement('div');
+      tagsEl.className = 'note-tags';
+      tagsEl.textContent = tags.join(', ');
+      li.appendChild(tagsEl);
+    }
     li.dataset.id = note.id;
+    if (note.id === currentId) {
+      li.classList.add('active');
+    }
     li.addEventListener('click', async () => {
       await openNote(note);
     });
@@ -258,6 +390,7 @@ function renderNotes() {
 async function openNote(note) {
   currentId = note.id;
   bodyEl.value = note.body;
+  setActiveNoteInList();
 }
 
 async function createNote() {
