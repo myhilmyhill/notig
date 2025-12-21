@@ -1,7 +1,8 @@
 'use strict';
-
-import http from 'https://unpkg.com/isomorphic-git@beta/http/web/index.js'
-import { Buffer } from 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm'
+import LightningFS from 'https://esm.sh/@isomorphic-git/lightning-fs';
+import * as git from 'https://esm.sh/isomorphic-git@beta';
+import http from 'https://esm.sh/isomorphic-git@beta/http/web';
+import { Buffer } from 'https://esm.sh/buffer@6.0.3';
 
 if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
@@ -22,16 +23,37 @@ const author = {
   email: 'user@example.com',
 };
 
+/**
+ * @template {HTMLElement} T
+ * @param {string} id
+ * @returns {T}
+ */
+function getRequiredElement(id) {
+  const el = document.getElementById(id);
+  if (!el) {
+    throw new Error(`Missing element: ${id}`);
+  }
+  return /** @type {T} */ (el);
+}
+
 /** @type {HTMLParagraphElement} */
-const statusEl = document.getElementById('sync-status');
-const listEl = document.getElementById('note-list');
-const bodyEl = document.getElementById('note-body');
-const saveBtn = document.getElementById('save-note');
-const pushBtn = document.getElementById('push-notes');
-const pullBtn = document.getElementById('pull-notes');
-const cloneBtn = document.getElementById('clone');
-const deleteBtn = document.getElementById('delete');
-const newBtn = document.getElementById('new-note');
+const statusEl = getRequiredElement('sync-status');
+/** @type {HTMLUListElement} */
+const listEl = getRequiredElement('note-list');
+/** @type {HTMLTextAreaElement} */
+const bodyEl = getRequiredElement('note-body');
+/** @type {HTMLButtonElement} */
+const saveBtn = getRequiredElement('save-note');
+/** @type {HTMLButtonElement} */
+const pushBtn = getRequiredElement('push-notes');
+/** @type {HTMLButtonElement} */
+const pullBtn = getRequiredElement('pull-notes');
+/** @type {HTMLButtonElement} */
+const cloneBtn = getRequiredElement('clone');
+/** @type {HTMLButtonElement} */
+const deleteBtn = getRequiredElement('delete');
+/** @type {HTMLButtonElement} */
+const newBtn = getRequiredElement('new-note');
 
 /** @type {Note[]} */
 let notes = [];
@@ -125,6 +147,17 @@ function randomId() {
   return crypto.randomUUID();
 }
 
+/**
+ * @param {unknown} err
+ * @returns {string | undefined}
+ */
+function getErrorCode(err) {
+  if (!err || typeof err !== 'object') return undefined;
+  if (!('code' in err)) return undefined;
+  const code = /** @type {{code?: unknown}} */ (err).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 async function ensureConfig() {
   const remoteUrl = await getConfig({ path: 'remote.origin.url' });
   const fetchRefspec = await getConfig({ path: 'remote.origin.fetch' });
@@ -170,7 +203,7 @@ async function loadNotes() {
   try {
     entries = await pfs.readdir(notesDir);
   } catch (err) {
-    if (err.code === 'ENOENT') {
+    if (getErrorCode(err) === 'ENOENT') {
       notes = [];
       return;
     }
@@ -189,7 +222,7 @@ async function loadNotes() {
         body,
       });
     } catch (err) {
-      if (err.code === 'ENOENT') continue;
+      if (getErrorCode(err) === 'ENOENT') continue;
       console.warn(`failed to read note ${filePath}`, err);
     }
   }
@@ -249,14 +282,14 @@ async function deleteCurrentNote() {
   try {
     await pfs.unlink(`${dir}/${filepath}`);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (getErrorCode(err) !== 'ENOENT') throw err;
   }
 
   try {
     await remove({ filepath });
   } catch (err) {
     // Ignore if the file was never tracked
-    if (err.code !== 'NotFoundError') throw err;
+    if (getErrorCode(err) !== 'NotFoundError') throw err;
   }
 
   const wasTracked = prevStatus !== 'untracked' && prevStatus !== 'absent';
