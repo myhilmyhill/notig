@@ -9,7 +9,7 @@ if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
 }
 
-/** @typedef {{id: string; body: string}} Note */
+/** @typedef {{id: string; body: string; updatedAt?: number}} Note */
 /** @typedef {{frontMatter: Record<string, string | string[]>; frontMatterRaw: string | null; content: string}} ParsedNote */
 
 const fs = new LightningFS('notig-fs');
@@ -42,6 +42,10 @@ function getRequiredElement(id) {
 const statusEl = getRequiredElement('sync-status');
 /** @type {HTMLUListElement} */
 const listEl = getRequiredElement('note-list');
+/** @type {HTMLUListElement} */
+const currentNoteHistoryEl = getRequiredElement('current-note-history');
+/** @type {HTMLDialogElement} */
+const updateDialogEl = getRequiredElement('update-dialog');
 /** @type {HTMLTextAreaElement} */
 const bodyEl = getRequiredElement('note-body');
 /** @type {HTMLDivElement} */
@@ -60,6 +64,10 @@ const deleteBtn = getRequiredElement('delete');
 const newBtn = getRequiredElement('new-note');
 /** @type {HTMLButtonElement} */
 const togglePlainBtn = getRequiredElement('toggle-plain');
+/** @type {HTMLButtonElement} */
+const showUpdatesBtn = getRequiredElement('show-updates');
+/** @type {HTMLButtonElement} */
+const closeUpdatesBtn = getRequiredElement('close-updates');
 
 /** @type {Note[]} */
 let notes = [];
@@ -71,6 +79,11 @@ let currentFrontMatterRaw = null;
 let editor = null;
 let isPlainText = false;
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+
+const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
+  dateStyle: 'medium',
+  timeStyle: 'medium',
+});
 
 export function clone(options = {}) {
   const defaults = {
@@ -126,6 +139,50 @@ export function merge(options = {}) {
   return git.merge({ ...defaults, ...options });
 }
 
+export function log(options = {}) {
+  const defaults = { fs, dir };
+  return git.log({ ...defaults, ...options });
+}
+
+/**
+ * @param {string} oid
+ * @param {string} filepath
+ * @returns {Promise<string | null>}
+ */
+async function getBlobOidAtCommit(oid, filepath) {
+  try {
+    const result = await git.readBlob({ fs, dir, oid, filepath });
+    return result.oid ?? null;
+  } catch (err) {
+    const code = getErrorCode(err);
+    if (code === 'NotFoundError' || code === 'ENOENT') {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * @param {string} filepath
+ * @returns {Promise<Awaited<ReturnType<typeof log>>>}
+ */
+async function logFileChanges(filepath) {
+  const commits = await log({ filepath });
+  /** @type {Awaited<ReturnType<typeof log>>} */
+  const filtered = [];
+  for (const entry of commits) {
+    const parentOid = entry.commit?.parent?.[0] ?? null;
+    const currentBlob = await getBlobOidAtCommit(entry.oid, filepath);
+    const parentBlob = parentOid
+      ? await getBlobOidAtCommit(parentOid, filepath)
+      : null;
+    if (currentBlob !== parentBlob) {
+      filtered.push(entry);
+    }
+  }
+  return filtered;
+}
+
 export function status(options = {}) {
   const defaults = { fs, dir };
   return git.status({ ...defaults, ...options });
@@ -149,7 +206,7 @@ function setStatus(message) {
 }
 
 /**
- * @param {Note} note
+ * @param {Pick<Note, 'id'> & Partial<Note>} note
  */
 function getNoteFilePath(note) {
   return `notes/${note.id}`;
@@ -208,6 +265,30 @@ function parseFrontMatter(lines) {
   });
 
   return data;
+}
+
+/**
+ * @param {number | undefined} timestamp
+ * @returns {string}
+ */
+function formatUpdatedAt(timestamp) {
+  if (!timestamp) return 'unknown';
+  return DATE_FORMATTER.format(new Date(timestamp));
+}
+
+/**
+ * @param {string} filepath
+ * @returns {Promise<number | undefined>}
+ */
+async function getLatestCommitTimestamp(filepath) {
+  try {
+    const commits = await logFileChanges(filepath);
+    const ts = commits[0]?.commit?.author?.timestamp;
+    if (typeof ts !== 'number') return undefined;
+    return ts * 1000;
+  } catch (err) {
+    return undefined;
+  }
 }
 
 /**
@@ -396,12 +477,15 @@ async function loadNotes() {
   const loadedNotes = [];
   for (const entry of entries) {
     const filePath = `${notesDir}/${entry}`;
+    const relPath = getNoteFilePath({ id: entry });
     try {
       /** @type {string} */
       const body = await pfs.readFile(filePath, 'utf8');
+      const updatedAt = await getLatestCommitTimestamp(relPath);
       loadedNotes.push({
         id: entry,
         body,
+        updatedAt,
       });
     } catch (err) {
       if (getErrorCode(err) === 'ENOENT') continue;
@@ -409,7 +493,7 @@ async function loadNotes() {
     }
   }
 
-  notes = loadedNotes;
+  notes = loadedNotes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 }
 
 /**
@@ -451,6 +535,87 @@ function renderNotes() {
 }
 
 /**
+ * @param {string} oid
+ * @param {HTMLPreElement} contentEl
+ * @returns {Promise<void>}
+ */
+async function renderHistoryContent(oid, contentEl) {
+  if (!currentId) return;
+  const filepath = getNoteFilePath({ id: currentId });
+  try {
+    const { blob } = await git.readBlob({ fs, dir, oid, filepath });
+    const decoder = new TextDecoder();
+    const body = decoder.decode(blob);
+    contentEl.textContent = body;
+  } catch (err) {
+    console.warn('failed to load history content', err);
+    contentEl.textContent = '内容を取得できません';
+  }
+}
+
+async function renderCurrentNoteHistory() {
+  currentNoteHistoryEl.innerHTML = '';
+  if (!currentId) {
+    const li = document.createElement('li');
+    li.textContent = 'メモが選択されていません';
+    currentNoteHistoryEl.appendChild(li);
+    return;
+  }
+
+  try {
+    const filepath = getNoteFilePath({ id: currentId });
+    const commits = await logFileChanges(filepath);
+    const validCommits = commits.filter(
+      (entry) => typeof entry.commit?.author?.timestamp === 'number'
+    );
+    if (!validCommits.length) {
+      const li = document.createElement('li');
+      li.textContent = '履歴がありません';
+      currentNoteHistoryEl.appendChild(li);
+      return;
+    }
+
+    validCommits.forEach((entry) => {
+      const ts = entry.commit?.author?.timestamp;
+      if (typeof ts !== 'number') return;
+      const date = formatUpdatedAt(ts * 1000);
+      const li = document.createElement('li');
+      const details = document.createElement('details');
+      details.className = 'history-details';
+      const summary = document.createElement('summary');
+      summary.textContent = date;
+      const content = document.createElement('pre');
+      content.className = 'history-content';
+      content.textContent = 'クリックで読み込み';
+      details.appendChild(summary);
+      details.appendChild(content);
+      details.addEventListener('toggle', () => {
+        if (!details.open) return;
+        const siblings = currentNoteHistoryEl.querySelectorAll('details');
+        siblings.forEach((other) => {
+          if (other !== details) {
+            other.removeAttribute('open');
+          }
+        });
+        if (!details.dataset.loaded) {
+          renderHistoryContent(entry.oid, content).catch((err) => {
+            console.warn('failed to render history content', err);
+          });
+          details.dataset.loaded = 'true';
+        }
+      });
+      li.appendChild(details);
+      currentNoteHistoryEl.appendChild(li);
+    });
+  } catch (err) {
+    console.warn('failed to load note history', err);
+    const li = document.createElement('li');
+    li.textContent = '履歴を取得できません';
+    currentNoteHistoryEl.appendChild(li);
+  }
+}
+
+/**
  * @param {Note} note
  */
 async function openNote(note) {
@@ -483,7 +648,7 @@ async function createNote() {
 async function deleteCurrentNote() {
   if (!currentId) return;
   const targetIndex = notes.findIndex((note) => note.id === currentId);
-  const filepath = getNoteFilePath({ id: currentId, body: '' });
+  const filepath = getNoteFilePath({ id: currentId });
   const prevStatus = await status({ filepath });
 
   try {
@@ -531,11 +696,22 @@ async function saveAndCommit() {
     body: bodyEl.value,
   };
   const filepath = await saveNoteFile(note);
+  const existing = notes.find((entry) => entry.id === currentId);
+  if (existing) {
+    existing.body = note.body;
+    if (note.updatedAt) {
+      existing.updatedAt = note.updatedAt;
+    }
+  } else {
+    notes.unshift(note);
+  }
+  notes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   await add({ filepath });
   const s = await status({ filepath });
   const modified = s === 'modified' || s === '*modified' || s === 'deleted' || s === '*deleted' || s === 'added' || s === '*added';
   if (modified) {
     await commit();
+    note.updatedAt = await getLatestCommitTimestamp(filepath);
   }
   setStatus(modified ? 'committed locally' : 'no changes');
 
@@ -645,6 +821,15 @@ togglePlainBtn.addEventListener('click', () => {
   }
   updateNoteBody(parsed.content ?? '');
   updateEditorModeUI();
+});
+
+showUpdatesBtn.addEventListener('click', async () => {
+  await renderCurrentNoteHistory();
+  updateDialogEl.showModal();
+});
+
+closeUpdatesBtn.addEventListener('click', () => {
+  updateDialogEl.close();
 });
 
 bodyEl.addEventListener('input', () => {
