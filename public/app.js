@@ -145,6 +145,23 @@ export function log(options = {}) {
   return git.log({ ...defaults, ...options });
 }
 
+async function isUpToDateWithRemote() {
+  try {
+    await fetch();
+  } catch (err) {
+    console.error(err);
+    return false;
+  }
+
+  const localRef = 'refs/heads/main';
+  const remoteRef = 'refs/remotes/origin/main';
+  const [localOid, remoteOid] = await Promise.all([
+    git.resolveRef({ fs, dir, ref: localRef }).catch(() => null),
+    git.resolveRef({ fs, dir, ref: remoteRef }).catch(() => null),
+  ]);
+  return Boolean(localOid && remoteOid && localOid === remoteOid);
+}
+
 /**
  * @param {string} oid
  * @param {string} filepath
@@ -304,13 +321,14 @@ async function getLatestCommitTimestamp(filepath) {
 }
 
 /**
- * @param {string} body
+ * @param {string | null | undefined} body
  * @returns {ParsedNote}
  */
 function parseNoteBody(body) {
-  const lines = body.split(/\r?\n/);
+  const safeBody = typeof body === 'string' ? body : '';
+  const lines = safeBody.split(/\r?\n/);
   if (lines[0] !== '---') {
-    return { frontMatter: {}, frontMatterRaw: null, content: body };
+    return { frontMatter: {}, frontMatterRaw: null, content: safeBody };
   }
 
   let endIndex = -1;
@@ -322,7 +340,7 @@ function parseNoteBody(body) {
   }
 
   if (endIndex === -1) {
-    return { frontMatter: {}, frontMatterRaw: null, content: body };
+    return { frontMatter: {}, frontMatterRaw: null, content: safeBody };
   }
 
   const frontMatterLines = lines.slice(1, endIndex);
@@ -433,11 +451,24 @@ function getErrorCode(err) {
   return typeof code === 'string' ? code : undefined;
 }
 
+/**
+ * @param {string} path
+ * @returns {Promise<string | null>}
+ */
+async function safeGetConfig(path) {
+  try {
+    const value = await getConfig({ path });
+    return typeof value === 'string' ? value : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function ensureConfig() {
-  const remoteUrl = await getConfig({ path: 'remote.origin.url' });
-  const fetchRefspec = await getConfig({ path: 'remote.origin.fetch' });
-  const existingName = await getConfig({ path: 'user.name' });
-  const existingEmail = await getConfig({ path: 'user.email' });
+  const remoteUrl = await safeGetConfig('remote.origin.url');
+  const fetchRefspec = await safeGetConfig('remote.origin.fetch');
+  const existingName = await safeGetConfig('user.name');
+  const existingEmail = await safeGetConfig('user.email');
   return (
     remoteUrl === url &&
     fetchRefspec === FETCH_REFSPEC &&
@@ -447,19 +478,19 @@ async function ensureConfig() {
 }
 
 async function applyConfigDefaults() {
-  const remoteUrl = await getConfig({ path: 'remote.origin.url' });
+  const remoteUrl = await safeGetConfig('remote.origin.url');
   if (remoteUrl !== url) {
     await setConfig({ path: 'remote.origin.url', value: url });
   }
-  const fetchRefspec = await getConfig({ path: 'remote.origin.fetch' });
+  const fetchRefspec = await safeGetConfig('remote.origin.fetch');
   if (fetchRefspec !== FETCH_REFSPEC) {
     await setConfig({ path: 'remote.origin.fetch', value: FETCH_REFSPEC });
   }
-  const existingName = await getConfig({ path: 'user.name' });
+  const existingName = await safeGetConfig('user.name');
   if (!existingName) {
     await setConfig({ path: 'user.name', value: author.name });
   }
-  const existingEmail = await getConfig({ path: 'user.email' });
+  const existingEmail = await safeGetConfig('user.email');
   if (!existingEmail) {
     await setConfig({ path: 'user.email', value: author.email });
   }
@@ -751,11 +782,35 @@ async function saveAndCommit() {
 }
 
 async function pushChanges() {
+  try {
+    setStatus('syncing…');
+    await fetch();
+    await merge();
+    await loadNotes();
+    renderNotes();
+  } catch (err) {
+    if (getErrorCode(err) === 'MergeConflictError') {
+      console.error(err);
+      setStatus('merge conflict');
+      return;
+    }
+    console.error(err);
+    setStatus('push failed');
+    return;
+  }
+
   setStatus('pushing…');
   try {
     await push();
     setStatus('pushed');
   } catch (err) {
+    if (getErrorCode(err) === 'PushRejectedError') {
+      const upToDate = await isUpToDateWithRemote();
+      if (upToDate) {
+        setStatus('pushed');
+        return;
+      }
+    }
     console.error(err);
     setStatus('push failed');
   }
