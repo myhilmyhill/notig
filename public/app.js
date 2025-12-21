@@ -1,3 +1,5 @@
+'use strict';
+
 import http from 'https://unpkg.com/isomorphic-git@beta/http/web/index.js'
 import { Buffer } from 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm'
 
@@ -5,330 +7,341 @@ if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
 }
 
+/** @typedef {{id: string; body: string}} Note */
+
 const fs = new LightningFS('notig-fs');
 const pfs = fs.promises;
 
 const dir = '/notig';
 const notesDir = `${dir}/notes`;
-const indexPath = `${notesDir}/index.json`;
-const remoteUrl = `${window.location.origin}/git/notig.git`;
+const url = `${window.location.origin}/git/notig.git`;
+const FETCH_REFSPEC = '+refs/heads/*:refs/remotes/origin/*';
 
 const author = {
   name: 'notig user',
   email: 'user@example.com',
 };
 
+/** @type {HTMLParagraphElement} */
 const statusEl = document.getElementById('sync-status');
 const listEl = document.getElementById('note-list');
-const titleEl = document.getElementById('note-title');
 const bodyEl = document.getElementById('note-body');
 const saveBtn = document.getElementById('save-note');
 const pushBtn = document.getElementById('push-notes');
 const pullBtn = document.getElementById('pull-notes');
+const cloneBtn = document.getElementById('clone');
+const deleteBtn = document.getElementById('delete');
 const newBtn = document.getElementById('new-note');
 
+/** @type {Note[]} */
 let notes = [];
+/** @type {Note['id'] | null} */
 let currentId = null;
 
-function slugifyTitle(title) {
-  const normalized = (title || '')
-    .trim()
-    .normalize('NFKC')
-    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-  return normalized || 'untitled';
+export function clone(options = {}) {
+  const defaults = {
+    fs,
+    http,
+    dir,
+    url,
+    ref: 'main',
+    singleBranch: true,
+  };
+  return git.clone({ ...defaults, ...options });
 }
 
-function buildFilePath(title, id) {
-  const slug = slugifyTitle(title || 'Untitled');
-  const suffix = id ? `-${String(id).slice(0, 8)}` : '';
-  return `notes/${slug}${suffix}.json`;
+export function add(options = {}) {
+  const defaults = { fs, dir };
+  return git.add({ ...defaults, ...options });
 }
 
-function getNoteFilePath(note) {
-  return note.filePath || `notes/${note.id}.json`;
+export function commit(options = {}) {
+  const defaults = { fs, dir, author, message: 'update' };
+  return git.commit({ ...defaults, ...options });
 }
 
+export function remove(options = {}) {
+  const defaults = { fs, dir };
+  return git.remove({ ...defaults, ...options });
+}
+
+export function push(options = {}) {
+  const defaults = { fs, dir, http, url, remote: 'origin', ref: 'main' };
+  return git.push({ ...defaults, ...options });
+}
+
+export function pull(options = {}) {
+  const defaults = { fs, dir, http, url, remote: 'origin', ref: 'main' };
+  return git.pull({ ...defaults, ...options });
+}
+
+export function fetch(options = {}) {
+  const defaults = {
+    fs,
+    dir,
+    http,
+    remote: 'origin',
+    ref: 'main',
+    singleBranch: true,
+  };
+  return git.fetch({ ...defaults, ...options });
+}
+
+export function merge(options = {}) {
+  const defaults = { fs, dir, ours: 'main', theirs: 'origin/main' };
+  return git.merge({ ...defaults, ...options });
+}
+
+export function status(options = {}) {
+  const defaults = { fs, dir };
+  return git.status({ ...defaults, ...options });
+}
+
+export function getConfig(options = {}) {
+  const defaults = { fs, dir };
+  return git.getConfig({ ...defaults, ...options });
+}
+
+export function setConfig(options = {}) {
+  const defaults = { fs, dir };
+  return git.setConfig({ ...defaults, ...options });
+}
+
+/**
+ * @param {string} message
+ */
 function setStatus(message) {
   statusEl.textContent = message;
 }
 
+/**
+ * @param {Note} note
+ */
+function getNoteFilePath(note) {
+  return `notes/${note.id}`;
+}
+
 function randomId() {
+  return crypto.randomUUID();
+}
+
+async function ensureConfig() {
+  const remoteUrl = await getConfig({ path: 'remote.origin.url' });
+  const fetchRefspec = await getConfig({ path: 'remote.origin.fetch' });
+  const existingName = await getConfig({ path: 'user.name' });
+  const existingEmail = await getConfig({ path: 'user.email' });
   return (
-    (crypto.randomUUID && crypto.randomUUID()) ||
-    Math.random().toString(16).slice(2, 10) + Math.random().toString(16).slice(2, 10)
+    remoteUrl === url &&
+    fetchRefspec === FETCH_REFSPEC &&
+    Boolean(existingName) &&
+    Boolean(existingEmail)
   );
 }
 
-async function repoExists() {
-  try {
-    await pfs.stat(`${dir}/.git`);
-    return true;
-  } catch (err) {
-    if (err.code === 'ENOENT') return false;
-    throw err;
+async function applyConfigDefaults() {
+  const remoteUrl = await getConfig({ path: 'remote.origin.url' });
+  if (remoteUrl !== url) {
+    await setConfig({ path: 'remote.origin.url', value: url });
+  }
+  const fetchRefspec = await getConfig({ path: 'remote.origin.fetch' });
+  if (fetchRefspec !== FETCH_REFSPEC) {
+    await setConfig({ path: 'remote.origin.fetch', value: FETCH_REFSPEC });
+  }
+  const existingName = await getConfig({ path: 'user.name' });
+  if (!existingName) {
+    await setConfig({ path: 'user.name', value: author.name });
+  }
+  const existingEmail = await getConfig({ path: 'user.email' });
+  if (!existingEmail) {
+    await setConfig({ path: 'user.email', value: author.email });
   }
 }
 
 async function cloneRepo() {
-  setStatus('cloning…');
-  await git.clone({
-    fs,
-    http,
-    dir,
-    url: remoteUrl,
-    singleBranch: true,
-    depth: 1,
-    ref: 'main',
-  });
+  if (!await ensureConfig()) {
+    await clone();
+    await applyConfigDefaults();
+    await bootstrap();
+  }
 }
 
-async function initRepo() {
-  setStatus('initializing…');
-  await pfs.mkdir(dir, { recursive: true });
-  await git.init({ fs, dir, defaultBranch: 'main' });
+async function loadNotes() {
+  let entries = [];
   try {
-    await git.addRemote({ fs, dir, remote: 'origin', url: remoteUrl });
+    entries = await pfs.readdir(notesDir);
   } catch (err) {
-    // ignore if remote already exists
-  }
-}
-
-async function ensureRepo() {
-  const exists = await repoExists();
-  if (!exists) {
-    try {
-      await cloneRepo();
-    } catch (err) {
-      console.warn('clone failed, falling back to init', err);
-      await initRepo();
-    }
-  }
-  await ensureUserConfig();
-}
-
-async function ensureUserConfig() {
-  const existingName = await git.getConfig({ fs, dir, path: 'user.name' }).catch(() => null);
-  const existingEmail = await git.getConfig({ fs, dir, path: 'user.email' }).catch(() => null);
-  if (!existingName) {
-    await git.setConfig({ fs, dir, path: 'user.name', value: author.name });
-  }
-  if (!existingEmail) {
-    await git.setConfig({ fs, dir, path: 'user.email', value: author.email });
-  }
-}
-
-async function ensureNotesDir() {
-  try {
-    await pfs.mkdir(notesDir, { recursive: true });
-  } catch (err) {
-    if (err.code === 'EEXIST') {
-      const stat = await pfs.stat(notesDir);
-      if (stat && stat.isDirectory()) return;
+    if (err.code === 'ENOENT') {
+      notes = [];
+      return;
     }
     throw err;
   }
-}
 
-async function readNotesIndex() {
-  try {
-    const raw = await pfs.readFile(indexPath, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    throw err;
-  }
-}
-
-async function writeNotesIndex(nextNotes) {
-  await ensureNotesDir();
-  await pfs.writeFile(indexPath, JSON.stringify(nextNotes, null, 2), 'utf8');
-}
-
-async function loadNote(id) {
-  const meta = notes.find((n) => n.id === id);
-  if (!meta) return null;
-
-  const candidates = [];
-  const storedPath = getNoteFilePath(meta);
-  candidates.push(storedPath);
-  const derivedPath = buildFilePath(meta.title || 'Untitled', meta.id);
-  if (!candidates.includes(derivedPath)) candidates.push(derivedPath);
-
-  for (const filePath of candidates) {
+  /** @type {Note[]} */
+  const loadedNotes = [];
+  for (const entry of entries) {
+    const filePath = `${notesDir}/${entry}`;
     try {
-      const raw = await pfs.readFile(`${dir}/${filePath}`, 'utf8');
-      const note = JSON.parse(raw);
-      note.filePath = filePath;
-      const index = notes.findIndex((n) => n.id === id);
-      if (index !== -1) {
-        notes[index] = { ...notes[index], filePath };
-      }
-      return note;
+      /** @type {string} */
+      const body = await pfs.readFile(filePath, 'utf8');
+      loadedNotes.push({
+        id: entry,
+        body,
+      });
     } catch (err) {
       if (err.code === 'ENOENT') continue;
-      throw err;
+      console.warn(`failed to read note ${filePath}`, err);
     }
   }
 
-  return null;
+  notes = loadedNotes;
 }
 
-async function saveNoteFile(note, previousFilePath) {
-  await ensureNotesDir();
-  const relPath = note.filePath || buildFilePath(note.title, note.id);
-  await pfs.writeFile(`${dir}/${relPath}`, JSON.stringify(note, null, 2), 'utf8');
-  if (previousFilePath && previousFilePath !== relPath) {
-    try {
-      await pfs.unlink(`${dir}/${previousFilePath}`);
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
-    }
-  }
+/**
+ * @param {Note} note
+ */
+async function saveNoteFile(note) {
+  const relPath = getNoteFilePath(note);
+  await pfs.writeFile(`${dir}/${relPath}`, note.body, 'utf8');
   return relPath;
-}
-
-async function commitIfNeeded(message, filepaths) {
-  const matrix = await git.statusMatrix({ fs, dir, filepaths });
-  const hasChanges = matrix.some(
-    ([, head, workdir, stage]) => !(head === workdir && workdir === stage)
-  );
-  if (!hasChanges) return false;
-
-  for (const filepath of filepaths) {
-    await git.add({ fs, dir, filepath });
-  }
-  await git.commit({ fs, dir, message, author });
-  return true;
 }
 
 function renderNotes() {
   listEl.innerHTML = '';
   notes.forEach((note) => {
     const li = document.createElement('li');
-    li.textContent = note.title || 'Untitled';
+    li.textContent = note.body.split('\n')[0] || 'Untitled';
     li.dataset.id = note.id;
-    if (note.id === currentId) li.classList.add('active');
     li.addEventListener('click', async () => {
-      await openNote(note.id);
+      await openNote(note);
     });
     listEl.appendChild(li);
   });
 }
 
-async function openNote(id) {
-  const note = await loadNote(id);
-  if (!note) return;
-  currentId = id;
-  titleEl.value = note.title || '';
-  bodyEl.value = note.body || '';
-  renderNotes();
+/**
+ * @param {Note} note
+ */
+async function openNote(note) {
+  currentId = note.id;
+  bodyEl.value = note.body;
 }
 
 async function createNote() {
   const id = randomId();
+  /** @type {Note} */
   const note = {
-    id,
-    title: 'New note',
-    body: '',
-    updatedAt: new Date().toISOString(),
+    id, body: ''
   };
-  note.filePath = buildFilePath(note.title, note.id);
   notes.unshift(note);
   await saveNoteFile(note);
-  await writeNotesIndex(notes);
   currentId = id;
   renderNotes();
-  titleEl.value = note.title;
-  bodyEl.value = note.body;
+  openNote(note);
+}
+
+async function deleteCurrentNote() {
+  if (!currentId) return;
+  const targetIndex = notes.findIndex((note) => note.id === currentId);
+  const filepath = getNoteFilePath({ id: currentId, body: '' });
+  const prevStatus = await status({ filepath });
+
+  try {
+    await pfs.unlink(`${dir}/${filepath}`);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+
+  try {
+    await remove({ filepath });
+  } catch (err) {
+    // Ignore if the file was never tracked
+    if (err.code !== 'NotFoundError') throw err;
+  }
+
+  const wasTracked = prevStatus !== 'untracked' && prevStatus !== 'absent';
+  if (wasTracked) {
+    await commit();
+    setStatus('deleted');
+  } else {
+    setStatus('removed locally');
+  }
+
+  if (targetIndex !== -1) {
+    notes.splice(targetIndex, 1);
+  }
+  currentId = notes[0]?.id ?? null;
+  renderNotes();
+  if (notes[0]) {
+    await openNote(notes[0]);
+  } else {
+    bodyEl.value = '';
+  }
 }
 
 async function saveAndCommit() {
-  await ensureRepo();
-  const id = currentId || randomId();
+  if (!currentId) return;
+  /** @type {Note} */
   const note = {
-    id,
-    title: titleEl.value.trim() || 'Untitled',
+    id: currentId,
     body: bodyEl.value,
-    updatedAt: new Date().toISOString(),
   };
-
-  const existingIndex = notes.findIndex((n) => n.id === id);
-  const previousNote = existingIndex === -1 ? null : notes[existingIndex];
-  const previousFilePath = previousNote ? getNoteFilePath(previousNote) : null;
-  note.filePath = buildFilePath(note.title, note.id);
-
-  if (existingIndex === -1) {
-    notes.unshift(note);
-  } else {
-    notes[existingIndex] = note;
+  const filepath = await saveNoteFile(note);
+  await add({ filepath });
+  const s = await status({ filepath });
+  const modified = s === 'modified' || s === '*modified' || s === 'deleted' || s === '*deleted' || s === 'added' || s === '*added';
+  if (modified) {
+    await commit();
   }
+  setStatus(modified ? 'committed locally' : 'no changes');
 
-  const changedFiles = [];
-  const relPath = await saveNoteFile(note, previousFilePath);
-  changedFiles.push(relPath);
-  if (previousFilePath && previousFilePath !== relPath) {
-    changedFiles.push(previousFilePath);
-  }
-  await writeNotesIndex(notes);
-  changedFiles.push('notes/index.json');
-
-  const committed = await commitIfNeeded(`chore: update ${note.title}`, changedFiles);
-  setStatus(committed ? 'committed locally' : 'no changes');
-
-  currentId = id;
   renderNotes();
 }
 
 async function pushChanges() {
   setStatus('pushing…');
   try {
-    await ensureRepo();
-    await git.push({ fs, http, dir, remote: 'origin', ref: 'main' });
+    await push();
     setStatus('pushed');
   } catch (err) {
     console.error(err);
     setStatus('push failed');
-    alert(`Push failed: ${err.message}`);
   }
 }
 
 async function pullChanges() {
   setStatus('pulling…');
   try {
-    await ensureRepo();
-    await git.fetch({ fs, http, dir, remote: 'origin', ref: 'main', singleBranch: true });
-    await git.merge({ fs, dir, ours: 'main', theirs: 'origin/main' });
-    notes = await readNotesIndex();
+    await pull();
+    await loadNotes();
     renderNotes();
-    if (notes[0]) await openNote(notes[0].id);
     setStatus('pulled');
   } catch (err) {
     console.error(err);
     setStatus('pull failed');
-    alert(`Pull failed: ${err.message}`);
   }
 }
 
 async function bootstrap() {
   setStatus('preparing…');
-  await ensureRepo();
+  const hasConfig = await ensureConfig();
+  if (!hasConfig) {
+    setStatus('missing config');
+    return;
+  }
 
   try {
-    await git.fetch({ fs, http, dir, remote: 'origin', ref: 'main', singleBranch: true });
-    await git.merge({ fs, dir, ours: 'main', theirs: 'origin/main' });
+    await pull();
     setStatus('synced');
   } catch (err) {
     console.warn('initial fetch failed; continuing offline', err);
     setStatus('offline (local only)');
   }
 
-  notes = await readNotesIndex();
+  await loadNotes();
   renderNotes();
   if (notes[0]) {
-    await openNote(notes[0].id);
+    await openNote(notes[0]);
   }
 }
 
@@ -353,10 +366,24 @@ pullBtn.addEventListener('click', () => {
   });
 });
 
+cloneBtn.addEventListener('click', () => {
+  cloneRepo().catch((err) => {
+    console.error(err);
+    setStatus('new note failed');
+  });
+});
+
 newBtn.addEventListener('click', () => {
   createNote().catch((err) => {
     console.error(err);
     setStatus('new note failed');
+  });
+});
+
+deleteBtn.addEventListener('click', () => {
+  deleteCurrentNote().catch((err) => {
+    console.error(err);
+    setStatus('delete failed');
   });
 });
 
