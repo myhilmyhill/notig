@@ -7,9 +7,9 @@ body {
   font-family: Arial, sans-serif;
   background: #0f172a;
   color: #e2e8f0;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
 }
 
 header {
@@ -99,44 +99,25 @@ dialog::backdrop {
   gap: 8px;
 }
 
-.history-details {
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  background: #111827;
+#current-note-history li {
   padding: 8px 10px;
-}
-
-.history-details[open] {
-  background: #0f172a;
-}
-
-.history-details summary {
-  cursor: pointer;
-  list-style: none;
-  font-weight: 600;
-}
-
-.history-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.history-content {
-  margin: 10px 0 0;
-  padding: 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #1f2937;
-  background: #0b1220;
-  color: #e2e8f0;
-  max-height: 240px;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  background: #111827;
+  cursor: pointer;
+  font-size: 13px;
+  position: relative;
+}
+
+#current-note-history li.active {
+  background: #1f2937;
+  border-color: #2563eb;
 }
 
 main {
   display: grid;
   grid-template-columns: 240px 1fr;
-  flex: 1;
+  height: 100%;
   min-height: 0;
 }
 
@@ -145,7 +126,21 @@ main {
   background: #0b1220;
   padding: 12px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
+
+.sidebar-section[hidden] {
+  display: none;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 
 #note-list {
   list-style: none;
@@ -164,6 +159,16 @@ main {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+}
+
+#note-list li::before,
+#current-note-history li::before {
+  content: '';
+  position: absolute;
+  inset: -6px -8px;
+  border-radius: 12px;
+  background: transparent;
 }
 
 #note-list li.active {

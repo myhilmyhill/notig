@@ -22,11 +22,16 @@
     <button id="new-note">New</button>
     <button id="push-notes">Push</button>
     <button id="pull-notes">Pull</button>
-    <button id="show-updates">History</button>
+    <button id="toggle-history" type="button" aria-pressed="false">History</button>
   </header>
   <main>
     <aside id="sidebar">
-      <ul id="note-list"></ul>
+      <section class="sidebar-section" id="notes-section">
+        <ul id="note-list"></ul>
+      </section>
+      <section class="sidebar-section" id="history-section" hidden>
+        <ul id="current-note-history"></ul>
+      </section>
     </aside>
     <section id="editor">
       <div id="editor-host" aria-label="Markdown editor"></div>
@@ -37,15 +42,6 @@
       </div>
     </section>
   </main>
-  <dialog id="update-dialog" aria-label="History">
-    <div class="dialog-header">
-      <h2>History</h2>
-      <button id="close-updates" type="button">Close</button>
-    </div>
-    <section class="dialog-section">
-      <ul id="current-note-history"></ul>
-    </section>
-  </dialog>
 </body>
 
 </html>

@@ -44,8 +44,6 @@ const statusEl = getRequiredElement('sync-status');
 const listEl = getRequiredElement('note-list');
 /** @type {HTMLUListElement} */
 const currentNoteHistoryEl = getRequiredElement('current-note-history');
-/** @type {HTMLDialogElement} */
-const updateDialogEl = getRequiredElement('update-dialog');
 /** @type {HTMLTextAreaElement} */
 const bodyEl = getRequiredElement('note-body');
 /** @type {HTMLDivElement} */
@@ -63,11 +61,13 @@ const deleteBtn = getRequiredElement('delete');
 /** @type {HTMLButtonElement} */
 const newBtn = getRequiredElement('new-note');
 /** @type {HTMLButtonElement} */
+const toggleHistoryBtn = getRequiredElement('toggle-history');
+/** @type {HTMLButtonElement} */
 const togglePlainBtn = getRequiredElement('toggle-plain');
-/** @type {HTMLButtonElement} */
-const showUpdatesBtn = getRequiredElement('show-updates');
-/** @type {HTMLButtonElement} */
-const closeUpdatesBtn = getRequiredElement('close-updates');
+/** @type {HTMLElement} */
+const historySectionEl = getRequiredElement('history-section');
+/** @type {HTMLElement} */
+const notesSectionEl = getRequiredElement('notes-section');
 
 /** @type {Note[]} */
 let notes = [];
@@ -78,6 +78,7 @@ let currentFrontMatterRaw = null;
 /** @type {Editor | null} */
 let editor = null;
 let isPlainText = false;
+let isHistoryVisible = false;
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
@@ -160,6 +161,17 @@ async function getBlobOidAtCommit(oid, filepath) {
     }
     throw err;
   }
+}
+
+/**
+ * @param {string} oid
+ * @param {string} filepath
+ * @returns {Promise<string>}
+ */
+async function getHistoryContent(oid, filepath) {
+  const { blob } = await git.readBlob({ fs, dir, oid, filepath });
+  const decoder = new TextDecoder();
+  return decoder.decode(blob);
 }
 
 /**
@@ -535,21 +547,48 @@ function renderNotes() {
 }
 
 /**
+ * @param {boolean} readOnly
+ */
+function setEditorReadOnly(readOnly) {
+  bodyEl.readOnly = readOnly;
+  const editableNodes = editorHostEl.querySelectorAll('[contenteditable]');
+  editableNodes.forEach((node) => {
+    if (readOnly) {
+      node.setAttribute('contenteditable', 'false');
+      return;
+    }
+    node.setAttribute('contenteditable', 'true');
+  });
+}
+
+function updateHistoryToggleUI() {
+  historySectionEl.toggleAttribute('hidden', !isHistoryVisible);
+  notesSectionEl.toggleAttribute('hidden', isHistoryVisible);
+  toggleHistoryBtn.setAttribute('aria-pressed', String(isHistoryVisible));
+  toggleHistoryBtn.textContent = isHistoryVisible ? 'Notes' : 'History';
+  setEditorReadOnly(isHistoryVisible);
+}
+
+/**
  * @param {string} oid
- * @param {HTMLPreElement} contentEl
  * @returns {Promise<void>}
  */
-async function renderHistoryContent(oid, contentEl) {
+async function showHistoryInEditor(oid) {
   if (!currentId) return;
   const filepath = getNoteFilePath({ id: currentId });
   try {
-    const { blob } = await git.readBlob({ fs, dir, oid, filepath });
-    const decoder = new TextDecoder();
-    const body = decoder.decode(blob);
-    contentEl.textContent = body;
+    const body = await getHistoryContent(oid, filepath);
+    bodyEl.value = body;
+    const parsed = parseNoteBody(body);
+    currentFrontMatterRaw = parsed.frontMatterRaw;
+    if (editor) {
+      editor.setMarkdown(parsed.content ?? '');
+    }
+    if (!isPlainText) {
+      updateNoteBody(parsed.content ?? '');
+    }
   } catch (err) {
-    console.warn('failed to load history content', err);
-    contentEl.textContent = '内容を取得できません';
+    console.warn('failed to load history content in editor', err);
   }
 }
 
@@ -580,31 +619,21 @@ async function renderCurrentNoteHistory() {
       if (typeof ts !== 'number') return;
       const date = formatUpdatedAt(ts * 1000);
       const li = document.createElement('li');
-      const details = document.createElement('details');
-      details.className = 'history-details';
-      const summary = document.createElement('summary');
-      summary.textContent = date;
-      const content = document.createElement('pre');
-      content.className = 'history-content';
-      content.textContent = 'クリックで読み込み';
-      details.appendChild(summary);
-      details.appendChild(content);
-      details.addEventListener('toggle', () => {
-        if (!details.open) return;
-        const siblings = currentNoteHistoryEl.querySelectorAll('details');
+      li.textContent = date;
+      li.dataset.oid = entry.oid;
+      li.addEventListener('click', () => {
+        const siblings = currentNoteHistoryEl.querySelectorAll('li');
         siblings.forEach((other) => {
-          if (other !== details) {
-            other.removeAttribute('open');
-          }
+          if (other === li) return;
+          other.classList.remove('active');
         });
-        if (!details.dataset.loaded) {
-          renderHistoryContent(entry.oid, content).catch((err) => {
-            console.warn('failed to render history content', err);
+        li.classList.add('active');
+        if (isHistoryVisible) {
+          showHistoryInEditor(entry.oid).catch((err) => {
+            console.warn('failed to show history in editor', err);
           });
-          details.dataset.loaded = 'true';
         }
       });
-      li.appendChild(details);
       currentNoteHistoryEl.appendChild(li);
     });
   } catch (err) {
@@ -630,6 +659,9 @@ async function openNote(note) {
     updateNoteBody(parsed.content ?? '');
   }
   setActiveNoteInList();
+  if (isHistoryVisible) {
+    await renderCurrentNoteHistory();
+  }
 }
 
 async function createNote() {
@@ -762,6 +794,8 @@ async function bootstrap() {
   renderNotes();
   if (notes[0]) {
     await openNote(notes[0]);
+  } else if (isHistoryVisible) {
+    await renderCurrentNoteHistory();
   }
 }
 
@@ -807,6 +841,25 @@ deleteBtn.addEventListener('click', () => {
   });
 });
 
+toggleHistoryBtn.addEventListener('click', () => {
+  isHistoryVisible = !isHistoryVisible;
+  updateHistoryToggleUI();
+  if (isHistoryVisible) {
+    renderCurrentNoteHistory().catch((err) => {
+      console.error(err);
+    });
+    return;
+  }
+  if (currentId) {
+    const note = notes.find((entry) => entry.id === currentId);
+    if (note) {
+      openNote(note).catch((err) => {
+        console.error(err);
+      });
+    }
+  }
+});
+
 togglePlainBtn.addEventListener('click', () => {
   isPlainText = !isPlainText;
   if (isPlainText) {
@@ -823,15 +876,6 @@ togglePlainBtn.addEventListener('click', () => {
   updateEditorModeUI();
 });
 
-showUpdatesBtn.addEventListener('click', async () => {
-  await renderCurrentNoteHistory();
-  updateDialogEl.showModal();
-});
-
-closeUpdatesBtn.addEventListener('click', () => {
-  updateDialogEl.close();
-});
-
 bodyEl.addEventListener('input', () => {
   if (!isPlainText) return;
   const parsed = parseNoteBody(bodyEl.value);
@@ -840,6 +884,7 @@ bodyEl.addEventListener('input', () => {
 
 createEditor('');
 updateEditorModeUI();
+updateHistoryToggleUI();
 
 colorSchemeMedia.addEventListener('change', () => {
   const markdown = isPlainText
