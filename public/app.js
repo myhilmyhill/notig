@@ -44,8 +44,6 @@ const statusEl = getRequiredElement('sync-status');
 const listEl = getRequiredElement('note-list');
 /** @type {HTMLUListElement} */
 const currentNoteHistoryEl = getRequiredElement('current-note-history');
-/** @type {HTMLTextAreaElement} */
-const bodyEl = getRequiredElement('note-body');
 /** @type {HTMLDivElement} */
 const editorHostEl = getRequiredElement('editor-host');
 /** @type {HTMLButtonElement} */
@@ -62,8 +60,6 @@ const deleteBtn = getRequiredElement('delete');
 const newBtn = getRequiredElement('new-note');
 /** @type {HTMLButtonElement} */
 const toggleHistoryBtn = getRequiredElement('toggle-history');
-/** @type {HTMLButtonElement} */
-const togglePlainBtn = getRequiredElement('toggle-plain');
 /** @type {HTMLElement} */
 const historySectionEl = getRequiredElement('history-section');
 /** @type {HTMLElement} */
@@ -73,12 +69,10 @@ const notesSectionEl = getRequiredElement('notes-section');
 let notes = [];
 /** @type {Note['id'] | null} */
 let currentId = null;
-/** @type {string | null} */
-let currentFrontMatterRaw = null;
 /** @type {Editor | null} */
 let editor = null;
-let isPlainText = false;
 let isHistoryVisible = false;
+let currentMarkdown = '';
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
@@ -390,29 +384,6 @@ function setActiveNoteInList() {
 }
 
 /**
- * @param {string} body
- * @param {string | null} frontMatterRaw
- * @returns {string}
- */
-function composeNoteBody(body, frontMatterRaw) {
-  if (!frontMatterRaw) return body;
-  if (!body) return `${frontMatterRaw}\n`;
-  return `${frontMatterRaw}\n${body}`;
-}
-
-/**
- * @param {string} markdown
- */
-function updateNoteBody(markdown) {
-  bodyEl.value = composeNoteBody(markdown, currentFrontMatterRaw);
-}
-
-function updateEditorModeUI() {
-  document.body.classList.toggle('plain-text', isPlainText);
-  togglePlainBtn.textContent = isPlainText ? 'WYSIWYG' : 'Plain Text';
-}
-
-/**
  * @param {string} markdown
  */
 function createEditor(markdown) {
@@ -425,19 +396,21 @@ function createEditor(markdown) {
     initialEditType: 'wysiwyg',
     previewStyle: 'vertical',
     usageStatistics: false,
-    hideModeSwitch: true,
+    hideModeSwitch: false,
     theme: colorSchemeMedia.matches ? 'dark' : 'light',
+    frontMatter: true,
     events: {
       change: () => {
-        if (!editor) return;
-        updateNoteBody(editor.getMarkdown());
+        if (!editor ) return;
+        currentMarkdown = editor.getMarkdown();
+      },
+      blur: () => {
+        saveAndCommit();
       },
     },
   });
   editor.setMarkdown(markdown);
-  if (!isPlainText) {
-    updateNoteBody(markdown);
-  }
+  currentMarkdown = markdown;
 }
 
 /**
@@ -581,7 +554,6 @@ function renderNotes() {
  * @param {boolean} readOnly
  */
 function setEditorReadOnly(readOnly) {
-  bodyEl.readOnly = readOnly;
   const editableNodes = editorHostEl.querySelectorAll('[contenteditable]');
   editableNodes.forEach((node) => {
     if (readOnly) {
@@ -609,14 +581,9 @@ async function showHistoryInEditor(oid) {
   const filepath = getNoteFilePath({ id: currentId });
   try {
     const body = await getHistoryContent(oid, filepath);
-    bodyEl.value = body;
-    const parsed = parseNoteBody(body);
-    currentFrontMatterRaw = parsed.frontMatterRaw;
+    currentMarkdown = body;
     if (editor) {
-      editor.setMarkdown(parsed.content ?? '');
-    }
-    if (!isPlainText) {
-      updateNoteBody(parsed.content ?? '');
+      editor.setMarkdown(body);
     }
   } catch (err) {
     console.warn('failed to load history content in editor', err);
@@ -680,14 +647,9 @@ async function renderCurrentNoteHistory() {
  */
 async function openNote(note) {
   currentId = note.id;
-  bodyEl.value = note.body;
-  const parsed = parseNoteBody(note.body);
-  currentFrontMatterRaw = parsed.frontMatterRaw;
+  currentMarkdown = note.body;
   if (editor) {
-    editor.setMarkdown(parsed.content ?? '');
-  }
-  if (!isPlainText) {
-    updateNoteBody(parsed.content ?? '');
+    editor.setMarkdown(note.body);
   }
   setActiveNoteInList();
   if (isHistoryVisible) {
@@ -743,8 +705,7 @@ async function deleteCurrentNote() {
   if (notes[0]) {
     await openNote(notes[0]);
   } else {
-    bodyEl.value = '';
-    currentFrontMatterRaw = null;
+    currentMarkdown = '';
     if (editor) {
       editor.setMarkdown('');
     }
@@ -756,7 +717,7 @@ async function saveAndCommit() {
   /** @type {Note} */
   const note = {
     id: currentId,
-    body: bodyEl.value,
+    body: currentMarkdown,
   };
   const filepath = await saveNoteFile(note);
   const existing = notes.find((entry) => entry.id === currentId);
@@ -915,40 +876,12 @@ toggleHistoryBtn.addEventListener('click', () => {
   }
 });
 
-togglePlainBtn.addEventListener('click', () => {
-  isPlainText = !isPlainText;
-  if (isPlainText) {
-    updateEditorModeUI();
-    bodyEl.focus();
-    return;
-  }
-  const parsed = parseNoteBody(bodyEl.value);
-  currentFrontMatterRaw = parsed.frontMatterRaw;
-  if (editor) {
-    editor.setMarkdown(parsed.content ?? '');
-  }
-  updateNoteBody(parsed.content ?? '');
-  updateEditorModeUI();
-});
-
-bodyEl.addEventListener('input', () => {
-  if (!isPlainText) return;
-  const parsed = parseNoteBody(bodyEl.value);
-  currentFrontMatterRaw = parsed.frontMatterRaw;
-});
-
 createEditor('');
-updateEditorModeUI();
 updateHistoryToggleUI();
 
 colorSchemeMedia.addEventListener('change', () => {
-  const markdown = isPlainText
-    ? parseNoteBody(bodyEl.value).content
-    : editor
-        ? editor.getMarkdown()
-        : '';
+  const markdown = editor ? editor.getMarkdown() : currentMarkdown;
   createEditor(markdown);
-  updateEditorModeUI();
 });
 
 bootstrap().catch((err) => {
