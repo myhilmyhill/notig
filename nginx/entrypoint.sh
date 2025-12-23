@@ -25,6 +25,7 @@ ensure_dir() {
 
 ensure_dir "$FCGI_SOCKET_DIR"
 ensure_dir /data/repos
+ensure_dir /data/blobs
 
 enable_receive_pack() {
   # Allow pushes over Smart HTTP; backend defaults to deny.

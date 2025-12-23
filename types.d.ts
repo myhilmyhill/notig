@@ -10,17 +10,9 @@ declare module 'https://esm.sh/@isomorphic-git/lightning-fs' {
 declare module 'https://esm.sh/isomorphic-git@beta' {
   type GitFn = (options?: Record<string, unknown>) => Promise<unknown>;
   const git: {
-    clone: GitFn;
-    add: GitFn;
-    commit: GitFn;
-    remove: GitFn;
-    push: GitFn;
-    pull: GitFn;
-    fetch: GitFn;
-    merge: GitFn;
-    status: GitFn;
-    getConfig: GitFn;
-    setConfig: GitFn;
+    [x: string]: GitFn;
+    log: (options?: Record<string, unknown>) => Promise<{ oid: string; commit: { parent: string | null; author: { timestamp: number } } | null }[]>;
+    readBlob: (options?: Record<string, unknown>) => Promise<{ oid: string; blob: BufferSource }>;
   };
   export = git;
 }

@@ -7,6 +7,6 @@ services:
     ports:
       - "8081:80"
     volumes:
-      - ./data/repos:/data/repos
+      - ./data:/data
       - ./public:/usr/share/nginx/html:ro
     restart: unless-stopped

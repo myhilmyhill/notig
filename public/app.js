@@ -92,6 +92,11 @@ export function clone(options = {}) {
   return git.clone({ ...defaults, ...options });
 }
 
+export function log(options = {}) {
+  const defaults = { fs, dir };
+  return git.log({ ...defaults, ...options });
+}
+
 export function add(options = {}) {
   const defaults = { fs, dir };
   return git.add({ ...defaults, ...options });
@@ -134,9 +139,9 @@ export function merge(options = {}) {
   return git.merge({ ...defaults, ...options });
 }
 
-export function log(options = {}) {
+export function readBlob(options = {}) {
   const defaults = { fs, dir };
-  return git.log({ ...defaults, ...options });
+  return git.readBlob({ ...defaults, ...options });
 }
 
 async function isUpToDateWithRemote() {
@@ -163,7 +168,7 @@ async function isUpToDateWithRemote() {
  */
 async function getBlobOidAtCommit(oid, filepath) {
   try {
-    const result = await git.readBlob({ fs, dir, oid, filepath });
+    const result = await readBlob({ oid, filepath });
     return result.oid ?? null;
   } catch (err) {
     const code = getErrorCode(err);
@@ -399,6 +404,16 @@ function createEditor(markdown) {
     hideModeSwitch: false,
     theme: colorSchemeMedia.matches ? 'dark' : 'light',
     frontMatter: true,
+    hooks: {
+      addImageBlobHook: async (blob, callback) => {
+        try {
+          const imageUrl = await uploadImageToBlobs(blob, currentId);
+          callback(imageUrl, blob.name);
+        } catch (err) {
+          console.error('image upload failed', err);
+        }
+      },
+    },
     events: {
       change: () => {
         if (!editor ) return;
@@ -411,6 +426,83 @@ function createEditor(markdown) {
   });
   editor.setMarkdown(markdown);
   currentMarkdown = markdown;
+}
+
+/**
+ * @param {Blob} blob
+ * @param {string | null} noteId
+ * @returns {Promise<string>}
+ */
+async function uploadImageToBlobs(blob, noteId) {
+  const filename = getBlobFileName(blob);
+  const safeNoteId = noteId || 'misc';
+
+  const url = `/blobs/${encodeURIComponent(safeNoteId)}/${encodeURIComponent(filename)}`;
+  const response = await globalThis.fetch(url, {
+    method: 'POST',
+    body: blob,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    const status = typeof response.status === 'number' ? response.status : 'unknown';
+    const statusText = response.statusText ? ` ${response.statusText}` : '';
+    const detail = errorBody ? ` ${errorBody}` : '';
+    throw new Error(`upload failed: ${status}${statusText}${detail}`);
+  }
+
+  return getUploadUrlFromResponse(response);
+}
+
+/**
+ * @param {Response} response
+ * @returns {Promise<string>}
+ */
+async function getUploadUrlFromResponse(response) {
+  const locationHeader =
+    response.headers.get('Location') ?? response.headers.get('location');
+  const contentType = response.headers.get('Content-Type') || '';
+
+  if (contentType.includes('application/json')) {
+    try {
+      const payload = await response.clone().json();
+      if (payload && typeof payload.url === 'string' && payload.url.trim()) {
+        return payload.url.trim();
+      }
+    } catch (err) {
+      // Fall through to plain text / Location handling.
+    }
+  }
+
+  const bodyText = await response.text().catch(() => '');
+  const trimmedBody = bodyText.trim();
+  if (trimmedBody) {
+    return trimmedBody;
+  }
+
+  if (locationHeader && locationHeader.trim()) {
+    return locationHeader.trim();
+  }
+
+  throw new Error('upload failed: invalid response');
+}
+
+/**
+ * @param {Blob} blob
+ * @returns {string}
+ */
+function getBlobFileName(blob) {
+  if ('name' in blob && typeof blob.name === 'string' && blob.name) {
+    return blob.name;
+  }
+  let ext = 'bin';
+  if (blob.type && blob.type.startsWith('image/')) {
+    const [, subtype] = blob.type.split('/');
+    if (subtype) {
+      ext = subtype;
+    }
+  }
+  return `image-${Date.now()}.${ext}`;
 }
 
 /**
