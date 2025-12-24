@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>notig</title>
   <link rel="stylesheet" href="./style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@toast-ui/editor@3.2.2/dist/toastui-editor.min.css" />
@@ -17,9 +17,7 @@
   <header>
     <h1>notig</h1>
     <div id="sync-status">offline</div>
-    <button id="clone">Clone</button>
     <button id="delete">Delete</button>
-    <button id="new-note">New</button>
     <button id="push-notes">Push</button>
     <button id="pull-notes">Pull</button>
     <button id="toggle-history" type="button" aria-pressed="false">History</button>
@@ -28,6 +26,12 @@
   <main>
     <aside id="sidebar">
       <section class="sidebar-section" id="notes-section">
+        <div class="notes-toolbar">
+          <div class="notes-toolbar-title">Notes</div>
+          <div class="notes-toolbar-actions" id="notes-toolbar-actions">
+            <button id="new-note">New</button>
+          </div>
+        </div>
         <ul id="note-list"></ul>
       </section>
       <section class="sidebar-section" id="history-section" hidden>
@@ -38,6 +42,9 @@
       <div id="editor-host" aria-label="Markdown editor"></div>
     </section>
   </main>
+  <section id="empty-state">
+    <button id="empty-clone" type="button">Clone</button>
+  </section>
 </body>
 
 </html>

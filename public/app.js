@@ -40,6 +40,10 @@ function getRequiredElement(id) {
 
 /** @type {HTMLParagraphElement} */
 const statusEl = getRequiredElement('sync-status');
+/** @type {HTMLBodyElement} */
+const bodyEl = document.body;
+/** @type {HTMLElement | null} */
+const headerEl = document.querySelector('header');
 /** @type {HTMLUListElement} */
 const listEl = getRequiredElement('note-list');
 /** @type {HTMLUListElement} */
@@ -52,8 +56,10 @@ const saveBtn = getRequiredElement('save-note');
 const pushBtn = getRequiredElement('push-notes');
 /** @type {HTMLButtonElement} */
 const pullBtn = getRequiredElement('pull-notes');
-/** @type {HTMLButtonElement} */
-const cloneBtn = getRequiredElement('clone');
+/** @type {HTMLButtonElement | null} */
+const cloneBtn = document.getElementById('clone');
+/** @type {HTMLButtonElement | null} */
+const emptyCloneBtn = document.getElementById('empty-clone');
 /** @type {HTMLButtonElement} */
 const deleteBtn = getRequiredElement('delete');
 /** @type {HTMLButtonElement} */
@@ -64,6 +70,19 @@ const toggleHistoryBtn = getRequiredElement('toggle-history');
 const historySectionEl = getRequiredElement('history-section');
 /** @type {HTMLElement} */
 const notesSectionEl = getRequiredElement('notes-section');
+const mobileMedia = window.matchMedia('(max-width: 1024px)');
+const coarsePointerMedia = window.matchMedia('(pointer: coarse)');
+
+/** @type {HTMLButtonElement | null} */
+let mobileBackBtn = null;
+if (headerEl) {
+  mobileBackBtn = document.createElement('button');
+  mobileBackBtn.id = 'mobile-back';
+  mobileBackBtn.type = 'button';
+  mobileBackBtn.textContent = 'Notes';
+  headerEl.insertBefore(mobileBackBtn, headerEl.firstChild);
+}
+
 
 /** @type {Note[]} */
 let notes = [];
@@ -240,6 +259,36 @@ export function setConfig(options = {}) {
  */
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function setMissingConfig(isMissing) {
+  bodyEl.classList.toggle('missing-config', isMissing);
+}
+
+function isMobileLayout() {
+  return mobileMedia.matches || coarsePointerMedia.matches;
+}
+
+function applyMobileState() {
+  const isMobile = isMobileLayout();
+  bodyEl.classList.toggle('is-mobile', isMobile);
+  if (!isMobile) {
+    bodyEl.classList.remove('show-editor');
+    return;
+  }
+  if (!currentId) {
+    bodyEl.classList.remove('show-editor');
+  }
+}
+
+function showEditorOnMobile() {
+  if (!isMobileLayout()) return;
+  bodyEl.classList.add('show-editor');
+}
+
+function showListOnMobile() {
+  if (!isMobileLayout()) return;
+  bodyEl.classList.remove('show-editor');
 }
 
 /**
@@ -769,6 +818,7 @@ async function openNote(note) {
   if (isHistoryVisible) {
     await renderCurrentNoteHistory();
   }
+  showEditorOnMobile();
 }
 
 async function createNote() {
@@ -824,6 +874,7 @@ async function deleteCurrentNote() {
     if (editor) {
       editor.setMarkdown('');
     }
+    showListOnMobile();
   }
 }
 
@@ -912,8 +963,10 @@ async function bootstrap() {
   const hasConfig = await ensureConfig();
   if (!hasConfig) {
     setStatus('missing config');
+    setMissingConfig(true);
     return;
   }
+  setMissingConfig(false);
 
   try {
     await pull();
@@ -930,6 +983,13 @@ async function bootstrap() {
   } else if (isHistoryVisible) {
     await renderCurrentNoteHistory();
   }
+}
+
+function handleCloneAction() {
+  cloneRepo().catch((err) => {
+    console.error(err);
+    setStatus('new note failed');
+  });
 }
 
 saveBtn.addEventListener('click', () => {
@@ -953,12 +1013,12 @@ pullBtn.addEventListener('click', () => {
   });
 });
 
-cloneBtn.addEventListener('click', () => {
-  cloneRepo().catch((err) => {
-    console.error(err);
-    setStatus('new note failed');
-  });
-});
+if (cloneBtn) {
+  cloneBtn.addEventListener('click', handleCloneAction);
+}
+if (emptyCloneBtn) {
+  emptyCloneBtn.addEventListener('click', handleCloneAction);
+}
 
 newBtn.addEventListener('click', () => {
   createNote().catch((err) => {
@@ -978,6 +1038,7 @@ toggleHistoryBtn.addEventListener('click', () => {
   isHistoryVisible = !isHistoryVisible;
   updateHistoryToggleUI();
   if (isHistoryVisible) {
+    showListOnMobile();
     renderCurrentNoteHistory().catch((err) => {
       console.error(err);
     });
@@ -994,11 +1055,21 @@ toggleHistoryBtn.addEventListener('click', () => {
 });
 
 updateHistoryToggleUI();
+applyMobileState();
+
+if (mobileBackBtn) {
+  mobileBackBtn.addEventListener('click', () => {
+    showListOnMobile();
+  });
+}
 
 colorSchemeMedia.addEventListener('change', () => {
   const markdown = editor ? editor.getMarkdown() : currentMarkdown;
   createEditor(markdown, { viewer: isHistoryVisible });
 });
+
+mobileMedia.addEventListener('change', applyMobileState);
+coarsePointerMedia.addEventListener('change', applyMobileState);
 
 bootstrap().catch((err) => {
   console.error(err);
