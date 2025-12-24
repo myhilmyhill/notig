@@ -51,8 +51,6 @@ const currentNoteHistoryEl = getRequiredElement('current-note-history');
 /** @type {HTMLDivElement} */
 const editorHostEl = getRequiredElement('editor-host');
 /** @type {HTMLButtonElement} */
-const saveBtn = getRequiredElement('save-note');
-/** @type {HTMLButtonElement} */
 const pushBtn = getRequiredElement('push-notes');
 /** @type {HTMLButtonElement} */
 const pullBtn = getRequiredElement('pull-notes');
@@ -991,13 +989,6 @@ function handleCloneAction() {
     setStatus('new note failed');
   });
 }
-
-saveBtn.addEventListener('click', () => {
-  saveAndCommit().catch((err) => {
-    console.error(err);
-    setStatus('save failed');
-  });
-});
 
 pushBtn.addEventListener('click', () => {
   pushChanges().catch((err) => {
