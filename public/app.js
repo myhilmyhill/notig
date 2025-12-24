@@ -73,6 +73,10 @@ let currentId = null;
 let editor = null;
 let isHistoryVisible = false;
 let currentMarkdown = '';
+let lastSavedMarkdown = '';
+let hasUnsavedChanges = false;
+let isApplyingMarkdown = false;
+let isViewingHistorySnapshot = false;
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
@@ -90,6 +94,11 @@ export function clone(options = {}) {
     singleBranch: true,
   };
   return git.clone({ ...defaults, ...options });
+}
+
+export function init(options = {}) {
+  const defaults = { fs, dir, defaultBranch: 'main' };
+  return git.init({ ...defaults, ...options });
 }
 
 export function log(options = {}) {
@@ -390,8 +399,9 @@ function setActiveNoteInList() {
 
 /**
  * @param {string} markdown
+ * @param {{viewer?: boolean}} [options]
  */
-function createEditor(markdown) {
+function createEditor(markdown, options = {}) {
   if (editor) {
     editor.destroy();
   }
@@ -399,11 +409,14 @@ function createEditor(markdown) {
     el: editorHostEl,
     height: '100%',
     initialEditType: 'wysiwyg',
-    previewStyle: 'vertical',
+    previewStyle: 'tab',
+    viewer: Boolean(options.viewer),
+    previewHighlight: false,
     usageStatistics: false,
     hideModeSwitch: false,
     theme: colorSchemeMedia.matches ? 'dark' : 'light',
     frontMatter: true,
+    autofocus: false,
     hooks: {
       addImageBlobHook: async (blob, callback) => {
         try {
@@ -416,16 +429,21 @@ function createEditor(markdown) {
     },
     events: {
       change: () => {
-        if (!editor ) return;
+        if (!editor || isApplyingMarkdown || isViewingHistorySnapshot) return;
         currentMarkdown = editor.getMarkdown();
+        hasUnsavedChanges = currentMarkdown !== lastSavedMarkdown;
       },
       blur: () => {
+        if (isViewingHistorySnapshot || !hasUnsavedChanges) return;
         saveAndCommit();
       },
     },
   });
+  isApplyingMarkdown = true;
   editor.setMarkdown(markdown);
   currentMarkdown = markdown;
+  hasUnsavedChanges = currentMarkdown !== lastSavedMarkdown;
+  isApplyingMarkdown = false;
 }
 
 /**
@@ -650,7 +668,7 @@ function setEditorReadOnly(readOnly) {
   editableNodes.forEach((node) => {
     if (readOnly) {
       node.setAttribute('contenteditable', 'false');
-      return;
+      return; 
     }
     node.setAttribute('contenteditable', 'true');
   });
@@ -661,6 +679,9 @@ function updateHistoryToggleUI() {
   notesSectionEl.toggleAttribute('hidden', isHistoryVisible);
   toggleHistoryBtn.setAttribute('aria-pressed', String(isHistoryVisible));
   toggleHistoryBtn.textContent = isHistoryVisible ? 'Notes' : 'History';
+  if (isHistoryVisible || !currentId) {
+    createEditor(currentMarkdown, { viewer: isHistoryVisible });
+  }
   setEditorReadOnly(isHistoryVisible);
 }
 
@@ -674,6 +695,7 @@ async function showHistoryInEditor(oid) {
   try {
     const body = await getHistoryContent(oid, filepath);
     currentMarkdown = body;
+    isViewingHistorySnapshot = true;
     if (editor) {
       editor.setMarkdown(body);
     }
@@ -740,9 +762,9 @@ async function renderCurrentNoteHistory() {
 async function openNote(note) {
   currentId = note.id;
   currentMarkdown = note.body;
-  if (editor) {
-    editor.setMarkdown(note.body);
-  }
+  isViewingHistorySnapshot = false;
+  lastSavedMarkdown = note.body;
+  createEditor(note.body, { viewer: isHistoryVisible });
   setActiveNoteInList();
   if (isHistoryVisible) {
     await renderCurrentNoteHistory();
@@ -753,8 +775,9 @@ async function createNote() {
   const id = randomId();
   /** @type {Note} */
   const note = {
-    id, body: ''
+    id, body: '---\ntitle: \n---\n\n'
   };
+  lastSavedMarkdown = note.body;
   notes.unshift(note);
   await saveNoteFile(note);
   currentId = id;
@@ -832,6 +855,8 @@ async function saveAndCommit() {
   setStatus(modified ? 'committed locally' : 'no changes');
 
   renderNotes();
+  lastSavedMarkdown = currentMarkdown;
+  hasUnsavedChanges = false;
 }
 
 async function pushChanges() {
@@ -968,12 +993,11 @@ toggleHistoryBtn.addEventListener('click', () => {
   }
 });
 
-createEditor('');
 updateHistoryToggleUI();
 
 colorSchemeMedia.addEventListener('change', () => {
   const markdown = editor ? editor.getMarkdown() : currentMarkdown;
-  createEditor(markdown);
+  createEditor(markdown, { viewer: isHistoryVisible });
 });
 
 bootstrap().catch((err) => {
