@@ -279,6 +279,14 @@ function applyMobileState() {
   }
 }
 
+function updateCurrentNoteState() {
+  const hasCurrentNote = Boolean(currentId);
+  bodyEl.classList.toggle('has-current-note', hasCurrentNote);
+  if (!hasCurrentNote) {
+    bodyEl.classList.remove('show-editor');
+  }
+}
+
 function showEditorOnMobile() {
   if (!isMobileLayout()) return;
   bodyEl.classList.add('show-editor');
@@ -726,7 +734,7 @@ function updateHistoryToggleUI() {
   notesSectionEl.toggleAttribute('hidden', isHistoryVisible);
   toggleHistoryBtn.setAttribute('aria-pressed', String(isHistoryVisible));
   toggleHistoryBtn.textContent = isHistoryVisible ? 'Notes' : 'History';
-  if (isHistoryVisible || !currentId) {
+  if (currentId) {
     createEditor(currentMarkdown, { viewer: isHistoryVisible });
   }
   setEditorReadOnly(isHistoryVisible);
@@ -812,6 +820,7 @@ async function openNote(note) {
   isViewingHistorySnapshot = false;
   lastSavedMarkdown = note.body;
   createEditor(note.body, { viewer: isHistoryVisible });
+  updateCurrentNoteState();
   setActiveNoteInList();
   if (isHistoryVisible) {
     await renderCurrentNoteHistory();
@@ -872,6 +881,7 @@ async function deleteCurrentNote() {
     if (editor) {
       editor.setMarkdown('');
     }
+    updateCurrentNoteState();
     showListOnMobile();
   }
 }
@@ -976,9 +986,8 @@ async function bootstrap() {
 
   await loadNotes();
   renderNotes();
-  if (notes[0]) {
-    await openNote(notes[0]);
-  } else if (isHistoryVisible) {
+  updateCurrentNoteState();
+  if (isHistoryVisible) {
     await renderCurrentNoteHistory();
   }
 }

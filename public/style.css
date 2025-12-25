@@ -142,6 +142,10 @@ main {
   min-height: 0;
 }
 
+body:not(.has-current-note) #editor-host {
+  display: none;
+}
+
 #sidebar {
   border-right: 1px solid #1f2937;
   background: #0b1220;
