@@ -1,7 +1,7 @@
 'use strict';
 import LightningFS from 'https://esm.sh/@isomorphic-git/lightning-fs';
-import * as git from 'https://esm.sh/isomorphic-git@beta';
-import http from 'https://esm.sh/isomorphic-git@beta/http/web';
+import * as git from 'https://esm.sh/isomorphic-git';
+import http from 'https://esm.sh/isomorphic-git/http/web';
 import { Buffer } from 'https://esm.sh/buffer@6.0.3';
 import { Editor } from 'https://esm.sh/@toast-ui/editor@3.2.2';
 
@@ -94,6 +94,8 @@ let lastSavedMarkdown = '';
 let hasUnsavedChanges = false;
 let isApplyingMarkdown = false;
 let isViewingHistorySnapshot = false;
+let isHandlingPopState = false;
+let hasInitializedHistoryState = false;
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
@@ -144,7 +146,15 @@ export function push(options = {}) {
 }
 
 export function pull(options = {}) {
-  const defaults = { fs, dir, http, url, remote: 'origin', ref: 'main' };
+  const defaults = {
+    fs,
+    dir,
+    http,
+    url,
+    remote: 'origin',
+    ref: 'main',
+    abortOnConflict: false,
+  };
   return git.pull({ ...defaults, ...options });
 }
 
@@ -161,7 +171,13 @@ export function fetch(options = {}) {
 }
 
 export function merge(options = {}) {
-  const defaults = { fs, dir, ours: 'main', theirs: 'origin/main' };
+  const defaults = {
+    fs,
+    dir,
+    ours: 'main',
+    theirs: 'origin/main',
+    abortOnConflict: false,
+  };
   return git.merge({ ...defaults, ...options });
 }
 
@@ -292,9 +308,16 @@ function showEditorOnMobile() {
   bodyEl.classList.add('show-editor');
 }
 
-function showListOnMobile() {
+function showListOnMobile(options = {}) {
   if (!isMobileLayout()) return;
   bodyEl.classList.remove('show-editor');
+  const source = options.source ?? 'system';
+  if (source === 'history' || isHandlingPopState) return;
+  if (history.state && history.state.view === 'note' && history.length > 1) {
+    history.back();
+    return;
+  }
+  replaceHistoryState({ view: 'list' });
 }
 
 /**
@@ -590,6 +613,24 @@ function getErrorCode(err) {
 }
 
 /**
+ * @param {unknown} result
+ * @returns {string[]}
+ */
+function getConflictsFromResult(result) {
+  if (!result || typeof result !== 'object') return [];
+  const candidate = /** @type {{conflicts?: unknown; mergeResult?: unknown}} */ (result);
+  if (Array.isArray(candidate.conflicts)) return candidate.conflicts;
+  if (
+    candidate.mergeResult &&
+    typeof candidate.mergeResult === 'object' &&
+    Array.isArray(/** @type {{conflicts?: unknown}} */ (candidate.mergeResult).conflicts)
+  ) {
+    return /** @type {{conflicts: string[]}} */ (candidate.mergeResult).conflicts;
+  }
+  return [];
+}
+
+/**
  * @param {string} path
  * @returns {Promise<string | null>}
  */
@@ -709,7 +750,7 @@ function renderNotes() {
       li.classList.add('active');
     }
     li.addEventListener('click', async () => {
-      await openNote(note);
+      await openNote(note, { source: 'user' });
     });
     listEl.appendChild(li);
   });
@@ -738,6 +779,32 @@ function updateHistoryToggleUI() {
     createEditor(currentMarkdown, { viewer: isHistoryVisible });
   }
   setEditorReadOnly(isHistoryVisible);
+}
+
+function pushHistoryState(state) {
+  if (isHandlingPopState) return;
+  history.pushState(state, '');
+}
+
+function replaceHistoryState(state) {
+  if (isHandlingPopState) return;
+  history.replaceState(state, '');
+}
+
+function updateHistoryForNote(noteId, options = {}) {
+  let replace = options.replace ?? false;
+  if (!replace && isMobileLayout()) {
+    if (!history.state || history.state.view !== 'list') {
+      replace = true;
+    }
+  }
+  const state = { view: 'note', id: noteId };
+  if (replace) {
+    replaceHistoryState(state);
+  } else {
+    pushHistoryState(state);
+  }
+  hasInitializedHistoryState = true;
 }
 
 /**
@@ -813,8 +880,9 @@ async function renderCurrentNoteHistory() {
 
 /**
  * @param {Note} note
+ * @param {{source?: 'user' | 'history' | 'system'}} [options]
  */
-async function openNote(note) {
+async function openNote(note, options = {}) {
   currentId = note.id;
   currentMarkdown = note.body;
   isViewingHistorySnapshot = false;
@@ -826,6 +894,10 @@ async function openNote(note) {
     await renderCurrentNoteHistory();
   }
   showEditorOnMobile();
+  if (options.source !== 'history') {
+    const shouldReplace = options.source === 'system' || !hasInitializedHistoryState;
+    updateHistoryForNote(note.id, { replace: shouldReplace });
+  }
 }
 
 async function createNote() {
@@ -839,7 +911,7 @@ async function createNote() {
   await saveNoteFile(note);
   currentId = id;
   renderNotes();
-  openNote(note);
+  openNote(note, { source: 'user' });
 }
 
 async function deleteCurrentNote() {
@@ -875,7 +947,7 @@ async function deleteCurrentNote() {
   currentId = notes[0]?.id ?? null;
   renderNotes();
   if (notes[0]) {
-    await openNote(notes[0]);
+    await openNote(notes[0], { source: 'system' });
   } else {
     currentMarkdown = '';
     if (editor) {
@@ -922,9 +994,14 @@ async function pushChanges() {
   try {
     setStatus('syncing…');
     await fetch();
-    await merge();
+    const mergeResult = await merge();
     await loadNotes();
     renderNotes();
+    const conflicts = getConflictsFromResult(mergeResult);
+    if (conflicts.length) {
+      setStatus('merge conflict (markers created)');
+      return;
+    }
   } catch (err) {
     if (getErrorCode(err) === 'MergeConflictError') {
       console.error(err);
@@ -956,13 +1033,24 @@ async function pushChanges() {
 async function pullChanges() {
   setStatus('pulling…');
   try {
-    await pull();
+    await fetch();
+    const mergeResult = await merge({ abortOnConflict: false });
     await loadNotes();
     renderNotes();
+    const conflicts = getConflictsFromResult(mergeResult);
+    if (conflicts.length) {
+      setStatus('merge conflict (markers created)');
+      return;
+    }
     setStatus('pulled');
   } catch (err) {
-    console.error(err);
-    setStatus('pull failed');
+    if (err instanceof MergeConflictError) {
+      console.log(err.data);
+
+    } else {
+      console.error(err);
+      setStatus('pull failed');
+    }
   }
 }
 
@@ -976,19 +1064,39 @@ async function bootstrap() {
   }
   setMissingConfig(false);
 
+  let didLoadNotes = false;
   try {
-    await pull();
-    setStatus('synced');
+    await fetch();
+    const mergeResult = await merge();
+    await loadNotes();
+    renderNotes();
+    didLoadNotes = true;
+    const conflicts = getConflictsFromResult(mergeResult);
+    if (conflicts.length) {
+      setStatus('merge conflict (markers created)');
+    } else {
+      setStatus('synced');
+    }
   } catch (err) {
     console.warn('initial fetch failed; continuing offline', err);
     setStatus('offline (local only)');
   }
 
-  await loadNotes();
-  renderNotes();
+  if (!didLoadNotes) {
+    await loadNotes();
+    renderNotes();
+  }
   updateCurrentNoteState();
   if (isHistoryVisible) {
     await renderCurrentNoteHistory();
+  }
+  if (!hasInitializedHistoryState) {
+    if (currentId) {
+      updateHistoryForNote(currentId, { replace: true });
+    } else {
+      replaceHistoryState({ view: 'list' });
+      hasInitializedHistoryState = true;
+    }
   }
 }
 
@@ -1047,7 +1155,7 @@ toggleHistoryBtn.addEventListener('click', () => {
   if (currentId) {
     const note = notes.find((entry) => entry.id === currentId);
     if (note) {
-      openNote(note).catch((err) => {
+      openNote(note, { source: 'system' }).catch((err) => {
         console.error(err);
       });
     }
@@ -1059,7 +1167,7 @@ applyMobileState();
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {
-    showListOnMobile();
+    showListOnMobile({ source: 'user' });
   });
 }
 
@@ -1070,6 +1178,31 @@ colorSchemeMedia.addEventListener('change', () => {
 
 mobileMedia.addEventListener('change', applyMobileState);
 coarsePointerMedia.addEventListener('change', applyMobileState);
+
+async function handlePopState(event) {
+  isHandlingPopState = true;
+  try {
+    const state = event.state;
+    if (state && state.view === 'note' && typeof state.id === 'string') {
+      const note = notes.find((entry) => entry.id === state.id);
+      if (note) {
+        await openNote(note, { source: 'history' });
+        return;
+      }
+    }
+    if (isMobileLayout()) {
+      showListOnMobile({ source: 'history' });
+    }
+  } finally {
+    isHandlingPopState = false;
+  }
+}
+
+window.addEventListener('popstate', (event) => {
+  handlePopState(event).catch((err) => {
+    console.error('failed to handle history navigation', err);
+  });
+});
 
 bootstrap().catch((err) => {
   console.error(err);

@@ -7,7 +7,7 @@ declare module 'https://esm.sh/@isomorphic-git/lightning-fs' {
   export default LightningFS;
 }
 
-declare module 'https://esm.sh/isomorphic-git@beta' {
+declare module 'https://esm.sh/isomorphic-git' {
   type GitFn = (options?: Record<string, unknown>) => Promise<unknown>;
   const git: {
     [x: string]: GitFn;
@@ -17,7 +17,7 @@ declare module 'https://esm.sh/isomorphic-git@beta' {
   export = git;
 }
 
-declare module 'https://esm.sh/isomorphic-git@beta/http/web' {
+declare module 'https://esm.sh/isomorphic-git/http/web' {
   const http: unknown;
   export default http;
 }

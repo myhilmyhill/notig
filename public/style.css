@@ -7,7 +7,7 @@ body {
   font-family: Arial, sans-serif;
   background: #0f172a;
   color: #e2e8f0;
-  height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr;
 }
@@ -277,11 +277,6 @@ body:not(.has-current-note) #editor-host {
   body {
     width: 100%;
     overflow-x: hidden;
-  }
-
-  body {
-    height: 100vh;
-    overflow: hidden;
   }
 
   header {
