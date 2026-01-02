@@ -96,6 +96,7 @@ let isApplyingMarkdown = false;
 let isViewingHistorySnapshot = false;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
+let lastStatusMessage = 'offline';
 const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
@@ -258,6 +259,65 @@ export function status(options = {}) {
   return git.status({ ...defaults, ...options });
 }
 
+export function statusMatrix(options = {}) {
+  const defaults = { fs, dir };
+  return git.statusMatrix({ ...defaults, ...options });
+}
+
+const STATUS_MATRIX_LABELS = {
+  head: {
+    0: 'absent',
+    1: 'present',
+  },
+  workdir: {
+    0: 'absent',
+    1: 'same',
+    2: 'modified',
+  },
+  stage: {
+    0: 'absent',
+    1: 'same',
+    2: 'modified',
+    3: 'conflicted',
+  },
+};
+
+/**
+ * @param {[string, number, number, number]} entry
+ * @returns {string}
+ */
+function summarizeStatusMatrixEntry(entry) {
+  const [, head, workdir, stage] = entry;
+  if (head === 0 && workdir === 2 && stage === 0) return 'new, untracked';
+  if (head === 0 && workdir === 2 && stage === 2) return 'added, staged';
+  if (head === 0 && workdir === 2 && stage === 3) return 'added, staged, unstaged changes';
+  if (head === 1 && workdir === 1 && stage === 1) return 'clean';
+  if (head === 1 && workdir === 2 && stage === 1) return 'modified, unstaged';
+  if (head === 1 && workdir === 2 && stage === 2) return 'modified, staged';
+  if (head === 1 && workdir === 2 && stage === 3) return 'modified, staged, unstaged changes';
+  if (head === 1 && workdir === 0 && stage === 1) return 'deleted, unstaged';
+  if (head === 1 && workdir === 0 && stage === 0) return 'deleted, staged';
+  if (head === 1 && workdir === 2 && stage === 0) return 'deleted, staged, unstaged changes';
+  if (head === 1 && workdir === 1 && stage === 0) return 'deleted, staged, unstaged changes';
+  return 'unknown';
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof statusMatrix>>} matrix
+ */
+function formatStatusMatrix(matrix) {
+  return matrix.map((entry) => {
+    const [path, head, workdir, stage] = entry;
+    return {
+      path,
+      head: STATUS_MATRIX_LABELS.head[head] ?? `?(${head})`,
+      workdir: STATUS_MATRIX_LABELS.workdir[workdir] ?? `?(${workdir})`,
+      stage: STATUS_MATRIX_LABELS.stage[stage] ?? `?(${stage})`,
+      summary: summarizeStatusMatrixEntry(entry),
+    };
+  });
+}
+
 export function getConfig(options = {}) {
   const defaults = { fs, dir };
   return git.getConfig({ ...defaults, ...options });
@@ -272,11 +332,66 @@ export function setConfig(options = {}) {
  * @param {string} message
  */
 function setStatus(message) {
-  statusEl.textContent = message;
+  lastStatusMessage = message;
+  renderStatus();
+}
+
+function renderStatus() {
+  const suffix = hasUnsavedChanges ? ' (unsaved)' : '';
+  statusEl.textContent = `${lastStatusMessage}${suffix}`;
+}
+
+/**
+ * @param {boolean} next
+ */
+function setHasUnsavedChanges(next) {
+  if (hasUnsavedChanges === next) return;
+  hasUnsavedChanges = next;
+  renderStatus();
 }
 
 function setMissingConfig(isMissing) {
   bodyEl.classList.toggle('missing-config', isMissing);
+}
+
+/**
+ * @returns {Promise<boolean>}
+ */
+async function commitMergeConflictMarkers() {
+  const matrix = await statusMatrix();
+  const conflicted = matrix
+    .filter((entry) => entry[3] === 3)
+    .map(([path]) => path);
+  if (!conflicted.length) return false;
+  for (const filepath of conflicted) {
+    await add({ filepath });
+  }
+  const localRef = 'refs/heads/main';
+  const remoteRef = 'refs/remotes/origin/main';
+  const [localOid, remoteOid] = await Promise.all([
+    git.resolveRef({ fs, dir, ref: localRef }).catch(() => null),
+    git.resolveRef({ fs, dir, ref: remoteRef }).catch(() => null),
+  ]);
+  if (localOid && remoteOid && localOid !== remoteOid) {
+    await commit({ message: 'merge conflict', parent: [localOid, remoteOid] });
+  } else if (localOid) {
+    await commit({ message: 'merge conflict', parent: localOid });
+  } else {
+    await commit({ message: 'merge conflict' });
+  }
+  return true;
+}
+
+async function resetToRemote() {
+  const remoteRef = 'refs/remotes/origin/main';
+  const localRef = 'refs/heads/main';
+  const remoteOid = await git.resolveRef({ fs, dir, ref: remoteRef });
+  await git.writeRef({ fs, dir, ref: localRef, value: remoteOid, force: true });
+  await git.checkout({ fs, dir, ref: 'main', force: true });
+}
+
+async function refreshWorkingTree() {
+  await git.checkout({ fs, dir, ref: 'main', force: true });
 }
 
 function isMobileLayout() {
@@ -509,7 +624,7 @@ function createEditor(markdown, options = {}) {
       change: () => {
         if (!editor || isApplyingMarkdown || isViewingHistorySnapshot) return;
         currentMarkdown = editor.getMarkdown();
-        hasUnsavedChanges = currentMarkdown !== lastSavedMarkdown;
+        setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
       },
       blur: () => {
         if (isViewingHistorySnapshot || !hasUnsavedChanges) return;
@@ -520,7 +635,7 @@ function createEditor(markdown, options = {}) {
   isApplyingMarkdown = true;
   editor.setMarkdown(markdown);
   currentMarkdown = markdown;
-  hasUnsavedChanges = currentMarkdown !== lastSavedMarkdown;
+  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
   isApplyingMarkdown = false;
 }
 
@@ -610,24 +725,6 @@ function getErrorCode(err) {
   if (!('code' in err)) return undefined;
   const code = /** @type {{code?: unknown}} */ (err).code;
   return typeof code === 'string' ? code : undefined;
-}
-
-/**
- * @param {unknown} result
- * @returns {string[]}
- */
-function getConflictsFromResult(result) {
-  if (!result || typeof result !== 'object') return [];
-  const candidate = /** @type {{conflicts?: unknown; mergeResult?: unknown}} */ (result);
-  if (Array.isArray(candidate.conflicts)) return candidate.conflicts;
-  if (
-    candidate.mergeResult &&
-    typeof candidate.mergeResult === 'object' &&
-    Array.isArray(/** @type {{conflicts?: unknown}} */ (candidate.mergeResult).conflicts)
-  ) {
-    return /** @type {{conflicts: string[]}} */ (candidate.mergeResult).conflicts;
-  }
-  return [];
 }
 
 /**
@@ -958,8 +1055,11 @@ async function deleteCurrentNote() {
   }
 }
 
+/**
+ * @returns {Promise<boolean>}
+ */
 async function saveAndCommit() {
-  if (!currentId) return;
+  if (!currentId) return false;
   /** @type {Note} */
   const note = {
     id: currentId,
@@ -987,41 +1087,85 @@ async function saveAndCommit() {
 
   renderNotes();
   lastSavedMarkdown = currentMarkdown;
-  hasUnsavedChanges = false;
+  setHasUnsavedChanges(false);
+  return modified;
 }
 
 async function pushChanges() {
+  if (hasUnsavedChanges && currentId && !isViewingHistorySnapshot) {
+    try {
+      await saveAndCommit();
+    } catch (err) {
+      console.error(err);
+      setStatus('commit failed');
+      return;
+    }
+  }
+  const [preLocalOid, preRemoteOid] = await Promise.all([
+    git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
+    git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+  ]);
+  console.log('[push] refs:before', { preLocalOid, preRemoteOid });
+  try {
+    const matrix = await statusMatrix();
+    console.log('[push] statusMatrix', formatStatusMatrix(matrix));
+  } catch (err) {
+    console.warn('[push] statusMatrix failed', err);
+  }
+  let conflictCommitted = false;
   try {
     setStatus('syncing…');
     await fetch();
-    const mergeResult = await merge();
+    await merge({ abortOnConflict: false });
+    await refreshWorkingTree();
     await loadNotes();
     renderNotes();
-    const conflicts = getConflictsFromResult(mergeResult);
-    if (conflicts.length) {
-      setStatus('merge conflict (markers created)');
-      return;
-    }
   } catch (err) {
-    if (getErrorCode(err) === 'MergeConflictError') {
+    if (
+      err instanceof git.Errors.MergeConflictError ||
+      err instanceof git.Errors.UnmergedPathsError
+    ) {
       console.error(err);
-      setStatus('merge conflict');
+      await loadNotes();
+      renderNotes();
+      if (currentId) {
+        const note = notes.find((entry) => entry.id === currentId);
+        if (note) {
+          await openNote(note, { source: 'system' });
+        }
+      }
+      try {
+        conflictCommitted = await commitMergeConflictMarkers();
+      } catch (commitErr) {
+        console.error(commitErr);
+        setStatus('merge conflict commit failed');
+        return;
+      }
+      if (!conflictCommitted) {
+        setStatus('merge conflict (markers created)');
+        return;
+      }
+    } else {
+      console.error(err);
+      setStatus('push failed');
       return;
     }
-    console.error(err);
-    setStatus('push failed');
-    return;
   }
 
   setStatus('pushing…');
   try {
     await push();
-    setStatus('pushed');
+    const [postLocalOid, postRemoteOid] = await Promise.all([
+      git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
+      git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+    ]);
+    console.log('[push] refs:after', { postLocalOid, postRemoteOid });
+    setStatus(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
   } catch (err) {
-    if (getErrorCode(err) === 'PushRejectedError') {
+    if (err instanceof git.Errors.PushRejectedError) {
       const upToDate = await isUpToDateWithRemote();
       if (upToDate) {
-        setStatus('pushed');
+        setStatus(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
         return;
       }
     }
@@ -1034,19 +1178,56 @@ async function pullChanges() {
   setStatus('pulling…');
   try {
     await fetch();
-    const mergeResult = await merge({ abortOnConflict: false });
+    await merge({ abortOnConflict: false });
+    if (!hasUnsavedChanges) {
+      await refreshWorkingTree();
+    }
     await loadNotes();
     renderNotes();
-    const conflicts = getConflictsFromResult(mergeResult);
-    if (conflicts.length) {
-      setStatus('merge conflict (markers created)');
+    const [localOid, remoteOid] = await Promise.all([
+      git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
+      git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+    ]);
+    console.log('[pull] refs', { localOid, remoteOid });
+    console.log('[pull] notes', {
+      count: notes.length,
+      first: notes[0]?.id ?? null,
+      firstUpdatedAt: notes[0]?.updatedAt ?? null,
+      currentId,
+    });
+    if (!hasUnsavedChanges && currentId) {
+      const note = notes.find((entry) => entry.id === currentId);
+      if (note) {
+        await openNote(note, { source: 'system' });
+      }
+    }
+    const committed = await commitMergeConflictMarkers();
+    if (committed) {
+      setStatus('merge conflict committed');
       return;
     }
     setStatus('pulled');
   } catch (err) {
-    if (err instanceof MergeConflictError) {
+    if (err instanceof git.Errors.MergeConflictError) {
       console.log(err.data);
-
+      if (!hasUnsavedChanges) {
+        try {
+          await resetToRemote();
+          await loadNotes();
+          renderNotes();
+          setStatus('pulled (remote)');
+          return;
+        } catch (resetErr) {
+          console.error(resetErr);
+        }
+      }
+      try {
+        const committed = await commitMergeConflictMarkers();
+        setStatus(committed ? 'merge conflict committed' : 'merge conflict (markers created)');
+      } catch (commitErr) {
+        console.error(commitErr);
+        setStatus('merge conflict commit failed');
+      }
     } else {
       console.error(err);
       setStatus('pull failed');
@@ -1067,19 +1248,29 @@ async function bootstrap() {
   let didLoadNotes = false;
   try {
     await fetch();
-    const mergeResult = await merge();
-    await loadNotes();
-    renderNotes();
-    didLoadNotes = true;
-    const conflicts = getConflictsFromResult(mergeResult);
-    if (conflicts.length) {
-      setStatus('merge conflict (markers created)');
-    } else {
-      setStatus('synced');
-    }
   } catch (err) {
     console.warn('initial fetch failed; continuing offline', err);
     setStatus('offline (local only)');
+  }
+
+  try {
+    await merge();
+    await refreshWorkingTree();
+    await loadNotes();
+    renderNotes();
+    didLoadNotes = true;
+    const committed = await commitMergeConflictMarkers();
+    setStatus(committed ? 'merge conflict committed' : 'synced');
+  } catch (err) {
+    if (err instanceof git.Errors.MergeConflictError) {
+      try {
+        const committed = await commitMergeConflictMarkers();
+        setStatus(committed ? 'merge conflict committed' : 'conflict');
+      } catch (commitErr) {
+        console.error(commitErr);
+        setStatus('merge conflict commit failed');
+      }
+    }
   }
 
   if (!didLoadNotes) {

@@ -13,6 +13,11 @@ declare module 'https://esm.sh/isomorphic-git' {
     [x: string]: GitFn;
     log: (options?: Record<string, unknown>) => Promise<{ oid: string; commit: { parent: string | null; author: { timestamp: number } } | null }[]>;
     readBlob: (options?: Record<string, unknown>) => Promise<{ oid: string; blob: BufferSource }>;
+    Errors: {
+      MergeConflictError: function;
+      PushRejectedError: function;
+      UnmergedPathsError: function;
+    };
   };
   export = git;
 }
