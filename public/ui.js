@@ -37,6 +37,8 @@ export const emptyCloneBtn = getRequiredElement('empty-clone');
 export const deleteBtn = getRequiredElement('delete');
 /** @type {HTMLButtonElement} */
 export const newBtn = getRequiredElement('new-note');
+/** @type {HTMLSelectElement} */
+export const tagFilterEl = getRequiredElement('tag-filter');
 /** @type {HTMLButtonElement} */
 export const toggleHistoryBtn = getRequiredElement('toggle-history');
 /** @type {HTMLElement} */

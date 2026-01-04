@@ -192,6 +192,20 @@ body:not(.has-current-note) #editor-host {
   font-size: 13px;
 }
 
+.notes-toolbar-actions select {
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.notes-toolbar-actions select:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
 
 #note-list {
   list-style: none;

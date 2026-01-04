@@ -30,6 +30,7 @@ import {
   parseNoteBody,
   formatUpdatedAt,
   getLatestCommitTimestamp,
+  getNoteTags,
   getNoteUpdatedAt,
 } from './note-utils.js';
 import {
@@ -40,6 +41,7 @@ import {
   emptyCloneBtn,
   deleteBtn,
   newBtn,
+  tagFilterEl,
   toggleHistoryBtn,
   mobileMedia,
   coarsePointerMedia,
@@ -77,6 +79,7 @@ let isApplyingMarkdown = false;
 let isViewingHistorySnapshot = false;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
+let currentTagFilter = '';
 
 /**
  * @param {boolean} next
@@ -93,6 +96,61 @@ function applyMobileUiState() {
 
 function updateCurrentNoteState() {
   updateCurrentNoteUiState(Boolean(currentId));
+}
+
+/**
+ * @param {Note} note
+ * @returns {string[]}
+ */
+function getTagsForNote(note) {
+  const parsed = parseNoteBody(note.body);
+  return getNoteTags(parsed);
+}
+
+/**
+ * @param {Note[]} sourceNotes
+ * @returns {string[]}
+ */
+function collectTagsFromNotes(sourceNotes) {
+  const tags = new Set();
+  sourceNotes.forEach((note) => {
+    getTagsForNote(note).forEach((tag) => {
+      tags.add(tag);
+    });
+  });
+  return Array.from(tags).sort((a, b) => a.localeCompare(b));
+}
+
+function updateTagFilterOptions() {
+  const tags = collectTagsFromNotes(notes);
+  if (currentTagFilter && !tags.includes(currentTagFilter)) {
+    currentTagFilter = '';
+  }
+  tagFilterEl.innerHTML = '';
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All tags';
+  tagFilterEl.appendChild(allOption);
+  tags.forEach((tag) => {
+    const option = document.createElement('option');
+    option.value = tag;
+    option.textContent = tag;
+    tagFilterEl.appendChild(option);
+  });
+  tagFilterEl.value = currentTagFilter;
+}
+
+/**
+ * @returns {Note[]}
+ */
+function getFilteredNotes() {
+  if (!currentTagFilter) return notes;
+  return notes.filter((note) => getTagsForNote(note).includes(currentTagFilter));
+}
+
+function renderNotesList() {
+  updateTagFilterOptions();
+  renderNotes(getFilteredNotes(), currentId, (note) => openNote(note, { source: 'user' }));
 }
 
 function showListOnMobile(options = {}) {
@@ -457,7 +515,7 @@ async function createNote() {
   notes.unshift(note);
   await saveNoteFile(note);
   currentId = id;
-  renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+  renderNotesList();
   openNote(note, { source: 'user' });
 }
 
@@ -492,7 +550,7 @@ async function deleteCurrentNote() {
     notes.splice(targetIndex, 1);
   }
   currentId = notes[0]?.id ?? null;
-  renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+  renderNotesList();
   if (notes[0]) {
     await openNote(notes[0], { source: 'system' });
   } else {
@@ -544,7 +602,7 @@ async function saveAndCommit() {
   }
   setStatusUi(modified ? 'committed locally' : 'no changes');
 
-  renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+  renderNotesList();
   lastSavedMarkdown = currentMarkdown;
   setHasUnsavedChanges(false);
   return modified;
@@ -578,7 +636,7 @@ async function pushChanges() {
     await merge({ abortOnConflict: false });
     await refreshWorkingTree();
     await loadNotes();
-    renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+    renderNotesList();
   } catch (err) {
     if (
       err instanceof git.Errors.MergeConflictError ||
@@ -586,7 +644,7 @@ async function pushChanges() {
     ) {
       console.error(err);
       await loadNotes();
-      renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+      renderNotesList();
       if (currentId) {
         const note = notes.find((entry) => entry.id === currentId);
         if (note) {
@@ -642,7 +700,7 @@ async function pullChanges() {
       await refreshWorkingTree();
     }
     await loadNotes();
-    renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+    renderNotesList();
     const [localOid, remoteOid] = await Promise.all([
       git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
@@ -673,7 +731,7 @@ async function pullChanges() {
         try {
           await resetToRemote();
           await loadNotes();
-  renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+          renderNotesList();
           setStatusUi('pulled (remote)');
           return;
         } catch (resetErr) {
@@ -716,7 +774,7 @@ async function bootstrap() {
     await merge();
     await refreshWorkingTree();
     await loadNotes();
-    renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+    renderNotesList();
     didLoadNotes = true;
     const committed = await commitMergeConflictMarkers();
     setStatusUi(committed ? 'merge conflict committed' : 'synced');
@@ -734,7 +792,7 @@ async function bootstrap() {
 
   if (!didLoadNotes) {
     await loadNotes();
-  renderNotes(notes, currentId, (note) => openNote(note, { source: 'user' }));
+    renderNotesList();
   }
   updateCurrentNoteState();
   if (isHistoryVisible) {
@@ -783,6 +841,11 @@ newBtn.addEventListener('click', () => {
     console.error(err);
     setStatusUi('new note failed');
   });
+});
+
+tagFilterEl.addEventListener('change', () => {
+  currentTagFilter = tagFilterEl.value;
+  renderNotesList();
 });
 
 deleteBtn.addEventListener('click', () => {
