@@ -8,15 +8,17 @@ declare module 'https://esm.sh/@isomorphic-git/lightning-fs' {
 }
 
 declare module 'https://esm.sh/isomorphic-git' {
-  type GitFn = (options?: Record<string, unknown>) => Promise<unknown>;
+  type GitFn = (options?: Record<string, unknown>) => Promise<void>;
   const git: {
     [x: string]: GitFn;
     log: (options?: Record<string, unknown>) => Promise<{ oid: string; commit: { parent: string | null; author: { timestamp: number } } | null }[]>;
+    status: (options?: Record<string, unknown> & { filepath: string }) => Promise<string>;
     readBlob: (options?: Record<string, unknown>) => Promise<{ oid: string; blob: BufferSource }>;
+    statusMatrix: (options?: Record<string, unknown>) => Promise<[string, 0|1, 0|1|2, 0|1|2|3][]>;
     Errors: {
-      MergeConflictError: function;
-      PushRejectedError: function;
-      UnmergedPathsError: function;
+      MergeConflictError: ErrorConstructor;
+      PushRejectedError: ErrorConstructor;
+      UnmergedPathsError: ErrorConstructor;
     };
   };
   export = git;
