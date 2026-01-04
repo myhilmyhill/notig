@@ -27,8 +27,10 @@ import {
   getErrorCode,
 } from './git-api.js';
 import {
+  parseNoteBody,
   formatUpdatedAt,
   getLatestCommitTimestamp,
+  getNoteUpdatedAt,
 } from './note-utils.js';
 import {
   editorHostEl,
@@ -250,29 +252,66 @@ async function cloneRepo() {
   }
 }
 
-async function loadNotes() {
-  let entries = [];
-  try {
-    entries = await pfs.readdir(notesDir);
-  } catch (err) {
-    if (getErrorCode(err) === 'ENOENT') {
-      notes = [];
-      return;
+/**
+ * @param {string} rootDir
+ * @returns {Promise<string[]>}
+ */
+async function listNoteFiles(rootDir) {
+  /** @type {string[]} */
+  const files = [];
+
+  async function walk(currentDir) {
+    /** @type {string[]} */
+    let entries = [];
+    try {
+      entries = await pfs.readdir(currentDir);
+    } catch (err) {
+      if (getErrorCode(err) === 'ENOENT') return;
+      throw err;
     }
-    throw err;
+
+    for (const entry of entries) {
+      const filePath = `${currentDir}/${entry}`;
+      let stats;
+      try {
+        stats = await pfs.stat(filePath);
+      } catch (err) {
+        if (getErrorCode(err) === 'ENOENT') continue;
+        throw err;
+      }
+      if (stats.isDirectory()) {
+        await walk(filePath);
+      } else if (stats.isFile()) {
+        files.push(filePath);
+      }
+    }
   }
+
+  await walk(rootDir);
+  return files;
+}
+
+async function loadNotes() {
+  const files = await listNoteFiles(notesDir);
 
   /** @type {Note[]} */
   const loadedNotes = [];
-  for (const entry of entries) {
-    const filePath = `${notesDir}/${entry}`;
-    const relPath = getNoteFilePath({ id: entry });
+  for (const filePath of files) {
+    const relId = filePath.startsWith(`${notesDir}/`)
+      ? filePath.slice(notesDir.length + 1)
+      : filePath;
+    const relPath = getNoteFilePath({ id: relId });
     try {
       /** @type {string} */
       const body = await pfs.readFile(filePath, 'utf8');
-      const updatedAt = await getLatestCommitTimestamp(relPath);
+      const parsed = parseNoteBody(body);
+      const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
+      const updatedAt =
+        typeof frontMatterUpdatedAt === 'number'
+          ? frontMatterUpdatedAt
+          : await getLatestCommitTimestamp(relPath);
       loadedNotes.push({
-        id: entry,
+        id: relId,
         body,
         updatedAt,
       });
@@ -476,6 +515,11 @@ async function saveAndCommit() {
     id: currentId,
     body: currentMarkdown,
   };
+  const parsed = parseNoteBody(note.body);
+  const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
+  if (typeof frontMatterUpdatedAt === 'number') {
+    note.updatedAt = frontMatterUpdatedAt;
+  }
   const filepath = await saveNoteFile(note);
   const existing = notes.find((entry) => entry.id === currentId);
   if (existing) {
@@ -492,7 +536,11 @@ async function saveAndCommit() {
   const modified = s === 'modified' || s === '*modified' || s === 'deleted' || s === '*deleted' || s === 'added' || s === '*added';
   if (modified) {
     await commit();
-    note.updatedAt = await getLatestCommitTimestamp(filepath);
+    if (typeof frontMatterUpdatedAt === 'number') {
+      note.updatedAt = frontMatterUpdatedAt;
+    } else {
+      note.updatedAt = await getLatestCommitTimestamp(filepath);
+    }
   }
   setStatusUi(modified ? 'committed locally' : 'no changes');
 

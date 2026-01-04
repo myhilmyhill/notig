@@ -49,12 +49,44 @@ export function parseFrontMatter(lines) {
         .map((entry) => entry.trim())
         .filter(Boolean);
     } else {
-      data[key] = value;
+      let normalizedValue = value;
+      if (key === 'title' || key === 'Title') {
+        normalizedValue = stripYamlDoubleQuotes(value);
+      }
+      data[key] = normalizedValue;
     }
     listKey = null;
   });
 
   return data;
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function stripYamlDoubleQuotes(value) {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\"/g, '"');
+  }
+  return value;
+}
+
+/**
+ * @param {string} value
+ * @returns {number | undefined}
+ */
+function parseFrontMatterTimestamp(value) {
+  const trimmed = stripYamlDoubleQuotes(value.trim());
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const num = Number(trimmed);
+    if (!Number.isFinite(num)) return undefined;
+    return num < 1e12 ? num * 1000 : num;
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return undefined;
+  return parsed;
 }
 
 /**
@@ -64,6 +96,24 @@ export function parseFrontMatter(lines) {
 export function formatUpdatedAt(timestamp) {
   if (!timestamp) return 'unknown';
   return DATE_FORMATTER.format(new Date(timestamp));
+}
+
+/**
+ * @param {{frontMatter: Record<string, string | string[]>}} parsed
+ * @returns {number | undefined}
+ */
+export function getNoteUpdatedAt(parsed) {
+  const modified = parsed.frontMatter.modified;
+  if (typeof modified === 'string') {
+    const ts = parseFrontMatterTimestamp(modified);
+    if (typeof ts === 'number') return ts;
+  }
+  const Modified = parsed.frontMatter.Modified;
+  if (typeof Modified === 'string') {
+    const ts = parseFrontMatterTimestamp(Modified);
+    if (typeof ts === 'number') return ts;
+  }
+  return undefined;
 }
 
 /**
@@ -120,6 +170,10 @@ export function parseNoteBody(body) {
 export function getNoteTitle(parsed) {
   if (typeof parsed.frontMatter.title === 'string') {
     const title = parsed.frontMatter.title.trim();
+    if (title) return title;
+  }
+  if (typeof parsed.frontMatter.Title === 'string') {
+    const title = parsed.frontMatter.Title.trim();
     if (title) return title;
   }
   const fallback = parsed.content

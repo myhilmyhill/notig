@@ -29,8 +29,8 @@ export const editorHostEl = getRequiredElement('editor-host');
 export const pushBtn = getRequiredElement('push-notes');
 /** @type {HTMLButtonElement} */
 export const pullBtn = getRequiredElement('pull-notes');
-/** @type {HTMLButtonElement} */
-export const cloneBtn = getRequiredElement('clone');
+/** @type {HTMLButtonElement | null} */
+export const cloneBtn = document.getElementById('clone');
 /** @type {HTMLButtonElement} */
 export const emptyCloneBtn = getRequiredElement('empty-clone');
 /** @type {HTMLButtonElement} */
