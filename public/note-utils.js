@@ -226,5 +226,12 @@ export function getNoteTags(parsed) {
   if (typeof tags === 'string' && tags.trim()) {
     return [tags.trim()];
   }
+  const Tags = parsed.frontMatter.Tags;
+  if (Array.isArray(Tags)) {
+    return Tags.filter((tag) => typeof tag === 'string' && tag.trim());
+  }
+  if (typeof Tags === 'string' && Tags.trim()) {
+    return [Tags.trim()];
+  }
   return [];
 }
