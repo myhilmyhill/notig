@@ -59,6 +59,7 @@ import {
   setActiveNoteInList,
   setEditorReadOnly,
   renderNotes,
+  renderTagFilterOptions,
   renderNoteHistory,
 } from './ui.js';
 
@@ -126,18 +127,7 @@ function updateTagFilterOptions() {
   if (currentTagFilter && !tags.includes(currentTagFilter)) {
     currentTagFilter = '';
   }
-  tagFilterEl.innerHTML = '';
-  const allOption = document.createElement('option');
-  allOption.value = '';
-  allOption.textContent = 'All tags';
-  tagFilterEl.appendChild(allOption);
-  tags.forEach((tag) => {
-    const option = document.createElement('option');
-    option.value = tag;
-    option.textContent = tag;
-    tagFilterEl.appendChild(option);
-  });
-  tagFilterEl.value = currentTagFilter;
+  renderTagFilterOptions(tags, currentTagFilter);
 }
 
 /**

@@ -180,29 +180,64 @@ export function renderNotes(notes, currentId, onOpenNote) {
 }
 
 /**
- * @param {{oid: string; label: string}[]} entries
- * @param {{emptyMessage: string; onSelect?: (oid: string) => void}} options
+ * @param {HTMLSelectElement} selectEl
+ * @param {{value: string; label: string; disabled?: boolean}[]} entries
+ * @param {{placeholder?: {value: string; label: string}; emptyMessage?: string; selectedValue?: string}} options
  */
-export function renderNoteHistory(entries, options) {
-  historySelectEl.innerHTML = '';
-  const currentOption = document.createElement('option');
-  currentOption.value = '';
-  currentOption.textContent = '現在';
-  historySelectEl.appendChild(currentOption);
-  if (!entries.length) {
+function renderSelectOptions(selectEl, entries, options = {}) {
+  selectEl.innerHTML = '';
+  if (options.placeholder) {
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = options.placeholder.value;
+    placeholderOption.textContent = options.placeholder.label;
+    selectEl.appendChild(placeholderOption);
+  }
+  if (!entries.length && options.emptyMessage) {
     const emptyOption = document.createElement('option');
     emptyOption.value = '__empty';
     emptyOption.textContent = options.emptyMessage;
     emptyOption.disabled = true;
-    historySelectEl.appendChild(emptyOption);
-    historySelectEl.value = '';
-    return;
+    selectEl.appendChild(emptyOption);
+  } else {
+    entries.forEach((entry) => {
+      const option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = entry.label;
+      if (entry.disabled) {
+        option.disabled = true;
+      }
+      selectEl.appendChild(option);
+    });
   }
-  entries.forEach((entry) => {
-    const option = document.createElement('option');
-    option.value = entry.oid;
-    option.textContent = entry.label;
-    historySelectEl.appendChild(option);
+  if (typeof options.selectedValue === 'string') {
+    selectEl.value = options.selectedValue;
+  }
+}
+
+/**
+ * @param {string[]} tags
+ * @param {string} currentTagFilter
+ */
+export function renderTagFilterOptions(tags, currentTagFilter) {
+  const entries = tags.map((tag) => ({ value: tag, label: tag }));
+  renderSelectOptions(tagFilterEl, entries, {
+    placeholder: { value: '', label: 'All tags' },
+    selectedValue: currentTagFilter,
   });
-  historySelectEl.value = '';
+}
+
+/**
+ * @param {{oid: string; label: string}[]} entries
+ * @param {{emptyMessage: string; onSelect?: (oid: string) => void}} options
+ */
+export function renderNoteHistory(entries, options) {
+  renderSelectOptions(
+    historySelectEl,
+    entries.map((entry) => ({ value: entry.oid, label: entry.label })),
+    {
+      placeholder: { value: '', label: '現在' },
+      emptyMessage: options.emptyMessage,
+      selectedValue: '',
+    }
+  );
 }
