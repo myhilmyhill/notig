@@ -37,6 +37,7 @@ import {
   editorHostEl,
   pushBtn,
   pullBtn,
+  resetBtn,
   cloneBtn,
   emptyCloneBtn,
   deleteBtn,
@@ -758,6 +759,48 @@ async function pullChanges() {
   }
 }
 
+async function resetNotesToOrigin() {
+  const hasLocalEdits = hasUnsavedChanges || isViewingHistorySnapshot;
+  const message = hasLocalEdits
+    ? '未保存の変更を含むローカルの内容をすべて破棄してoriginに戻します。よろしいですか？'
+    : 'ローカルの内容をすべて破棄してoriginに戻します。よろしいですか？';
+  if (!window.confirm(message)) return;
+
+  setStatusUi('resetting…');
+  try {
+    await fetch();
+    await resetToRemote();
+    await refreshWorkingTree();
+    await loadNotes();
+    currentId = notes[0]?.id ?? null;
+    isViewingHistorySnapshot = false;
+    historyMarkdown = '';
+    if (currentId) {
+      const note = notes.find((entry) => entry.id === currentId);
+      if (note) {
+        await openNote(note, { source: 'system' });
+      }
+    } else {
+      currentMarkdown = '';
+      lastSavedMarkdown = '';
+      if (editor) {
+        editor.setMarkdown('');
+      }
+      updateCurrentNoteState();
+      renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+      historySelectEl.value = '';
+      historySelectEl.disabled = true;
+      showListOnMobile();
+    }
+    renderNotesList();
+    setHasUnsavedChanges(false);
+    setStatusUi('reset to origin');
+  } catch (err) {
+    console.error(err);
+    setStatusUi('reset failed');
+  }
+}
+
 async function bootstrap() {
   setStatusUi('preparing…');
   const hasConfig = await ensureConfig();
@@ -830,6 +873,13 @@ pullBtn.addEventListener('click', () => {
   pullChanges().catch((err) => {
     console.error(err);
     setStatusUi('pull failed');
+  });
+});
+
+resetBtn.addEventListener('click', () => {
+  resetNotesToOrigin().catch((err) => {
+    console.error(err);
+    setStatusUi('reset failed');
   });
 });
 
