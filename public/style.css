@@ -227,6 +227,21 @@ body:not(.has-current-note) #editor-host {
   position: relative;
 }
 
+#note-list li.note-group {
+  background: transparent;
+  padding: 6px 4px 2px;
+  cursor: default;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+#note-list li.note-group::before {
+  display: none;
+}
+
 #note-list li::before,
 #current-note-history li::before {
   content: '';

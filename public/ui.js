@@ -1,5 +1,10 @@
 'use strict';
-import { parseNoteBody, getNoteTitle, getNoteTags } from './note-utils.js';
+import {
+  parseNoteBody,
+  getNoteTitle,
+  getNoteTags,
+  getUpdatedAtGroupLabel,
+} from './note-utils.js';
 
 /**
  * @template {HTMLElement} T
@@ -117,6 +122,7 @@ export function showListOnMobile() {
 export function setActiveNoteInList(currentId) {
   const items = listEl.querySelectorAll('li');
   items.forEach((item) => {
+    if (item.dataset.role !== 'note') return;
     item.classList.toggle('active', item.dataset.id === currentId);
   });
 }
@@ -140,18 +146,29 @@ export function updateHistoryToggleButton(isHistoryVisible) {
 }
 
 /**
- * @param {{id: string; body: string}[]} notes
+ * @param {{id: string; body: string; updatedAt?: number}[]} notes
  * @param {string | null} currentId
- * @param {(note: {id: string; body: string}) => Promise<void> | void} onOpenNote
+ * @param {(note: {id: string; body: string; updatedAt?: number}) => Promise<void> | void} onOpenNote
  */
 export function renderNotes(notes, currentId, onOpenNote) {
   listEl.innerHTML = '';
+  let currentGroupLabel = '';
   notes.forEach((note) => {
+    const groupLabel = getUpdatedAtGroupLabel(note.updatedAt);
+    if (groupLabel !== currentGroupLabel) {
+      currentGroupLabel = groupLabel;
+      const groupEl = document.createElement('li');
+      groupEl.className = 'note-group';
+      groupEl.dataset.role = 'group';
+      groupEl.textContent = groupLabel;
+      listEl.appendChild(groupEl);
+    }
     const parsed = parseNoteBody(note.body);
     const title = getNoteTitle(parsed);
     const tags = getNoteTags(parsed);
 
     const li = document.createElement('li');
+    li.dataset.role = 'note';
     const titleEl = document.createElement('div');
     titleEl.className = 'note-title';
     titleEl.textContent = title;

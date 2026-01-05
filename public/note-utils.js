@@ -99,6 +99,38 @@ export function formatUpdatedAt(timestamp) {
 }
 
 /**
+ * @param {number | undefined} timestamp
+ * @param {number} [now]
+ * @returns {string}
+ */
+export function getUpdatedAtGroupLabel(timestamp, now = Date.now()) {
+  if (!timestamp) return 'Unknown';
+  const startOfDay = (value) => {
+    const date = new Date(value);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  };
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.max(
+    0,
+    Math.floor((startOfDay(now) - startOfDay(timestamp)) / dayMs)
+  );
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return '1 day ago';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+  }
+  if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30);
+    return months === 1 ? '1 month ago' : `${months} months ago`;
+  }
+  const years = Math.floor(diffDays / 365);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+}
+
+/**
  * @param {{frontMatter: Record<string, string | string[]>}} parsed
  * @returns {number | undefined}
  */
