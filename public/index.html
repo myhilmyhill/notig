@@ -21,7 +21,6 @@
     <button id="delete">Delete</button>
     <button id="push-notes">Push</button>
     <button id="pull-notes">Pull</button>
-    <button id="toggle-history" type="button" aria-pressed="false">History</button>
   </header>
   <main>
     <aside id="sidebar">
@@ -37,11 +36,14 @@
       </div>
         <ul id="note-list"></ul>
       </section>
-      <section class="sidebar-section" id="history-section" hidden>
-        <ul id="current-note-history"></ul>
-      </section>
     </aside>
     <section id="editor">
+      <div class="history-bar">
+        <label for="history-select">History</label>
+        <select id="history-select" aria-label="History">
+          <option value="">現在</option>
+        </select>
+      </div>
       <div id="editor-host" aria-label="Markdown editor"></div>
     </section>
   </main>

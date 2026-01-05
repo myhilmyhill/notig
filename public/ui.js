@@ -26,8 +26,6 @@ export const bodyEl = document.body;
 const headerEl = document.querySelector('header');
 /** @type {HTMLUListElement} */
 export const listEl = getRequiredElement('note-list');
-/** @type {HTMLUListElement} */
-export const currentNoteHistoryEl = getRequiredElement('current-note-history');
 /** @type {HTMLDivElement} */
 export const editorHostEl = getRequiredElement('editor-host');
 /** @type {HTMLButtonElement} */
@@ -44,12 +42,8 @@ export const deleteBtn = getRequiredElement('delete');
 export const newBtn = getRequiredElement('new-note');
 /** @type {HTMLSelectElement} */
 export const tagFilterEl = getRequiredElement('tag-filter');
-/** @type {HTMLButtonElement} */
-export const toggleHistoryBtn = getRequiredElement('toggle-history');
-/** @type {HTMLElement} */
-export const historySectionEl = getRequiredElement('history-section');
-/** @type {HTMLElement} */
-export const notesSectionEl = getRequiredElement('notes-section');
+/** @type {HTMLSelectElement} */
+export const historySelectEl = getRequiredElement('history-select');
 export const mobileMedia = window.matchMedia('(max-width: 1024px)');
 export const coarsePointerMedia = window.matchMedia('(pointer: coarse)');
 export const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
@@ -138,13 +132,6 @@ export function setEditorReadOnly(readOnly) {
   });
 }
 
-export function updateHistoryToggleButton(isHistoryVisible) {
-  historySectionEl.toggleAttribute('hidden', !isHistoryVisible);
-  notesSectionEl.toggleAttribute('hidden', isHistoryVisible);
-  toggleHistoryBtn.setAttribute('aria-pressed', String(isHistoryVisible));
-  toggleHistoryBtn.textContent = isHistoryVisible ? 'Notes' : 'History';
-}
-
 /**
  * @param {{id: string; body: string; updatedAt?: number}[]} notes
  * @param {string | null} currentId
@@ -195,29 +182,25 @@ export function renderNotes(notes, currentId, onOpenNote) {
  * @param {{emptyMessage: string; onSelect?: (oid: string) => void}} options
  */
 export function renderNoteHistory(entries, options) {
-  currentNoteHistoryEl.innerHTML = '';
+  historySelectEl.innerHTML = '';
+  const currentOption = document.createElement('option');
+  currentOption.value = '';
+  currentOption.textContent = '現在';
+  historySelectEl.appendChild(currentOption);
   if (!entries.length) {
-    const li = document.createElement('li');
-    li.textContent = options.emptyMessage;
-    currentNoteHistoryEl.appendChild(li);
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '__empty';
+    emptyOption.textContent = options.emptyMessage;
+    emptyOption.disabled = true;
+    historySelectEl.appendChild(emptyOption);
+    historySelectEl.value = '';
     return;
   }
-
   entries.forEach((entry) => {
-    const li = document.createElement('li');
-    li.textContent = entry.label;
-    li.dataset.oid = entry.oid;
-    li.addEventListener('click', () => {
-      const siblings = currentNoteHistoryEl.querySelectorAll('li');
-      siblings.forEach((other) => {
-        if (other === li) return;
-        other.classList.remove('active');
-      });
-      li.classList.add('active');
-      if (options.onSelect) {
-        options.onSelect(entry.oid);
-      }
-    });
-    currentNoteHistoryEl.appendChild(li);
+    const option = document.createElement('option');
+    option.value = entry.oid;
+    option.textContent = entry.label;
+    historySelectEl.appendChild(option);
   });
+  historySelectEl.value = '';
 }

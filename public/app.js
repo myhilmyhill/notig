@@ -42,7 +42,7 @@ import {
   deleteBtn,
   newBtn,
   tagFilterEl,
-  toggleHistoryBtn,
+  historySelectEl,
   mobileMedia,
   coarsePointerMedia,
   colorSchemeMedia,
@@ -57,7 +57,6 @@ import {
   showListOnMobile as showListOnMobileUi,
   setActiveNoteInList,
   setEditorReadOnly,
-  updateHistoryToggleButton,
   renderNotes,
   renderNoteHistory,
 } from './ui.js';
@@ -71,7 +70,6 @@ let notes = [];
 let currentId = null;
 /** @type {Editor | null} */
 let editor = null;
-let isHistoryVisible = false;
 let currentMarkdown = '';
 let lastSavedMarkdown = '';
 let hasUnsavedChanges = false;
@@ -80,6 +78,7 @@ let isViewingHistorySnapshot = false;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
 let currentTagFilter = '';
+let historyMarkdown = '';
 
 /**
  * @param {boolean} next
@@ -178,7 +177,7 @@ function randomId() {
 
 /**
  * @param {string} markdown
- * @param {{viewer?: boolean}} [options]
+ * @param {{viewer?: boolean; preserveCurrentMarkdown?: boolean}} [options]
  */
 function createEditor(markdown, options = {}) {
   if (editor) {
@@ -220,7 +219,9 @@ function createEditor(markdown, options = {}) {
   });
   isApplyingMarkdown = true;
   editor.setMarkdown(markdown);
-  currentMarkdown = markdown;
+  if (!options.preserveCurrentMarkdown) {
+    currentMarkdown = markdown;
+  }
   setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
   isApplyingMarkdown = false;
 }
@@ -391,14 +392,6 @@ async function saveNoteFile(note) {
   return relPath;
 }
 
-function updateHistoryToggleUI() {
-  updateHistoryToggleButton(isHistoryVisible);
-  if (currentId) {
-    createEditor(currentMarkdown, { viewer: isHistoryVisible });
-  }
-  setEditorReadOnly(isHistoryVisible);
-}
-
 function pushHistoryState(state) {
   if (isHandlingPopState) return;
   history.pushState(state, '');
@@ -434,21 +427,38 @@ async function showHistoryInEditor(oid) {
   const filepath = getNoteFilePath({ id: currentId });
   try {
     const body = await getHistoryContent(oid, filepath);
-    currentMarkdown = body;
+    historyMarkdown = body;
     isViewingHistorySnapshot = true;
+    setEditorReadOnly(true);
     if (editor) {
+      isApplyingMarkdown = true;
       editor.setMarkdown(body);
+      isApplyingMarkdown = false;
     }
   } catch (err) {
     console.warn('failed to load history content in editor', err);
   }
 }
 
+function showCurrentInEditor() {
+  if (!currentId || !editor) return;
+  isViewingHistorySnapshot = false;
+  historyMarkdown = '';
+  setEditorReadOnly(false);
+  isApplyingMarkdown = true;
+  editor.setMarkdown(currentMarkdown);
+  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
+  isApplyingMarkdown = false;
+}
+
 async function renderCurrentNoteHistory() {
   if (!currentId) {
     renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+    historySelectEl.value = '';
+    historySelectEl.disabled = true;
     return;
   }
+  historySelectEl.disabled = false;
 
   try {
     const filepath = getNoteFilePath({ id: currentId });
@@ -468,15 +478,7 @@ async function renderCurrentNoteHistory() {
         label: typeof ts === 'number' ? formatUpdatedAt(ts * 1000) : entry.oid,
       };
     });
-    renderNoteHistory(entries, {
-      emptyMessage: '履歴がありません',
-      onSelect: (oid) => {
-        if (!isHistoryVisible) return;
-        showHistoryInEditor(oid).catch((err) => {
-          console.warn('failed to show history in editor', err);
-        });
-      },
-    });
+    renderNoteHistory(entries, { emptyMessage: '履歴がありません' });
   } catch (err) {
     console.warn('failed to load note history', err);
     renderNoteHistory([], { emptyMessage: '履歴を取得できません' });
@@ -491,13 +493,14 @@ async function openNote(note, options = {}) {
   currentId = note.id;
   currentMarkdown = note.body;
   isViewingHistorySnapshot = false;
+  historyMarkdown = '';
   lastSavedMarkdown = note.body;
-  createEditor(note.body, { viewer: isHistoryVisible });
+  createEditor(note.body, { viewer: false });
+  setEditorReadOnly(false);
   updateCurrentNoteState();
   setActiveNoteInList(currentId);
-  if (isHistoryVisible) {
-    await renderCurrentNoteHistory();
-  }
+  await renderCurrentNoteHistory();
+  historySelectEl.value = '';
   showEditorOnMobile();
   if (options.source !== 'history') {
     const shouldReplace = options.source === 'system' || !hasInitializedHistoryState;
@@ -559,6 +562,9 @@ async function deleteCurrentNote() {
       editor.setMarkdown('');
     }
     updateCurrentNoteState();
+    renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+    historySelectEl.value = '';
+    historySelectEl.disabled = true;
     showListOnMobile();
   }
 }
@@ -795,9 +801,7 @@ async function bootstrap() {
     renderNotesList();
   }
   updateCurrentNoteState();
-  if (isHistoryVisible) {
-    await renderCurrentNoteHistory();
-  }
+  await renderCurrentNoteHistory();
   if (!hasInitializedHistoryState) {
     if (currentId) {
       updateHistoryForNote(currentId, { replace: true });
@@ -855,28 +859,18 @@ deleteBtn.addEventListener('click', () => {
   });
 });
 
-toggleHistoryBtn.addEventListener('click', () => {
-  isHistoryVisible = !isHistoryVisible;
-  updateHistoryToggleUI();
-  if (isHistoryVisible) {
-    showListOnMobile();
-    renderCurrentNoteHistory().catch((err) => {
-      console.error(err);
-    });
+historySelectEl.addEventListener('change', () => {
+  if (!currentId) return;
+  const oid = historySelectEl.value;
+  if (!oid || oid === '__empty') {
+    showCurrentInEditor();
     return;
   }
-  if (currentId) {
-    const note = notes.find((entry) => entry.id === currentId);
-    if (note) {
-      openNote(note, { source: 'system' }).catch((err) => {
-        console.error(err);
-      });
-    }
-  }
+  showHistoryInEditor(oid).catch((err) => {
+    console.warn('failed to show history in editor', err);
+  });
 });
-
-  updateHistoryToggleUI();
-  applyMobileUiState();
+applyMobileUiState();
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {
@@ -885,8 +879,16 @@ if (mobileBackBtn) {
 }
 
 colorSchemeMedia.addEventListener('change', () => {
-  const markdown = editor ? editor.getMarkdown() : currentMarkdown;
-  createEditor(markdown, { viewer: isHistoryVisible });
+  const markdown = isViewingHistorySnapshot
+    ? historyMarkdown
+    : editor
+      ? editor.getMarkdown()
+      : currentMarkdown;
+  createEditor(markdown, {
+    viewer: isViewingHistorySnapshot,
+    preserveCurrentMarkdown: isViewingHistorySnapshot,
+  });
+  setEditorReadOnly(isViewingHistorySnapshot);
 });
 
 mobileMedia.addEventListener('change', applyMobileUiState);

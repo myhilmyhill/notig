@@ -273,6 +273,34 @@ body:not(.has-current-note) #editor-host {
   overflow-y: auto;
 }
 
+.history-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-bar label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+}
+
+.history-bar select {
+  background: #0b1220;
+  color: #e2e8f0;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  min-width: 180px;
+}
+
+.history-bar select:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
 #note-title {
   font-size: 18px;
   padding: 10px;
