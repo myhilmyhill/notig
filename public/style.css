@@ -71,6 +71,22 @@ button:hover {
   background: #1d4ed8;
 }
 
+#push-notes {
+  position: relative;
+}
+
+#push-notes.has-local-commits::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 2px #111827;
+}
+
 dialog {
   width: min(420px, 90vw);
   border: 1px solid #1f2937;

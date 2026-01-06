@@ -62,6 +62,7 @@ if (headerEl) {
 
 let baseStatusText = 'offline';
 let hasUnsavedChanges = false;
+let hasLocalCommits = false;
 
 export function setStatus(statusText) {
   baseStatusText = statusText;
@@ -71,6 +72,11 @@ export function setStatus(statusText) {
 export function setHasUnsavedChanges(next) {
   hasUnsavedChanges = next;
   renderStatus();
+}
+
+export function setHasLocalCommits(next) {
+  hasLocalCommits = next;
+  pushBtn.classList.toggle('has-local-commits', hasLocalCommits);
 }
 
 function renderStatus() {

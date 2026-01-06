@@ -58,6 +58,7 @@ import {
   showListOnMobile as showListOnMobileUi,
   setActiveNoteInList,
   setEditorReadOnly,
+  setHasLocalCommits as setHasLocalCommitsUi,
   listEl,
   renderNotes,
   renderTagFilterOptions,
@@ -242,6 +243,8 @@ async function buildNoteMarkers(sourceNotes) {
     git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
     git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
   ]);
+  const hasLocalCommits = await hasLocalCommitsToPush(localOid, remoteOid);
+  setHasLocalCommitsUi(hasLocalCommits);
   console.log('[markers] refs', { localOid, remoteOid });
   const changedPaths = await getChangedNotePaths(localOid, remoteOid);
   console.log('[markers] changed paths', Array.from(changedPaths));
@@ -260,6 +263,47 @@ async function buildNoteMarkers(sourceNotes) {
     }
   }
   return markers;
+}
+
+/**
+ * @param {string | null} localOid
+ * @param {string | null} remoteOid
+ * @returns {Promise<boolean>}
+ */
+async function hasLocalCommitsToPush(localOid, remoteOid) {
+  if (!localOid || !remoteOid) return false;
+  if (localOid === remoteOid) return false;
+  const localIsAncestor = await isOidInHistory('refs/remotes/origin/main', localOid);
+  return !localIsAncestor;
+}
+
+/**
+ * @param {string} ref
+ * @param {string} targetOid
+ * @returns {Promise<boolean>}
+ */
+async function isOidInHistory(ref, targetOid) {
+  const step = 100;
+  let depth = step;
+  let lastCount = 0;
+  while (depth <= 2000) {
+    let entries = [];
+    try {
+      entries = await git.log({ fs, dir, ref, depth });
+    } catch (err) {
+      console.warn('log failed', err);
+      return false;
+    }
+    if (entries.some((entry) => entry.oid === targetOid)) {
+      return true;
+    }
+    if (entries.length < depth || entries.length === lastCount) {
+      return false;
+    }
+    lastCount = entries.length;
+    depth += step;
+  }
+  return false;
 }
 
 /**
