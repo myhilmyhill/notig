@@ -265,6 +265,18 @@ body:not(.has-current-note) #editor-host {
   color: #94a3b8;
 }
 
+#note-list li.has-marker::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #38bdf8;
+  position: absolute;
+  right: 10px;
+  top: 12px;
+  box-shadow: 0 0 0 2px #0b1220;
+}
+
 #editor {
   padding: 16px;
   display: flex;

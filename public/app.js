@@ -68,6 +68,8 @@ import {
 
 /** @type {Note[]} */
 let notes = [];
+/** @type {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} */
+let noteMarkersById = {};
 /** @type {Note['id'] | null} */
 let currentId = null;
 /** @type {Editor | null} */
@@ -140,7 +142,12 @@ function getFilteredNotes() {
 
 function renderNotesList() {
   updateTagFilterOptions();
-  renderNotes(getFilteredNotes(), currentId, (note) => openNote(note, { source: 'user' }));
+  renderNotes(
+    getFilteredNotes(),
+    currentId,
+    (note) => openNote(note, { source: 'user' }),
+    noteMarkersById
+  );
 }
 
 function showListOnMobile(options = {}) {
@@ -160,6 +167,90 @@ function showListOnMobile(options = {}) {
  */
 function getNoteFilePath(note) {
   return `notes/${note.id}`;
+}
+
+/**
+ * @param {Note[]} sourceNotes
+ * @returns {Promise<Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>>}
+ */
+async function buildNoteMarkers(sourceNotes) {
+  /** @type {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} */
+  const markers = {};
+  const [localOid, remoteOid] = await Promise.all([
+    git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
+    git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+  ]);
+  console.log('[markers] refs', { localOid, remoteOid });
+  const changedPaths = await getChangedNotePaths(localOid, remoteOid);
+  console.log('[markers] changed paths', Array.from(changedPaths));
+
+  for (const note of sourceNotes) {
+    const filepath = getNoteFilePath(note);
+    const locallyCommitted = changedPaths.has(filepath);
+    console.log('[markers] note', {
+      id: note.id,
+      filepath,
+      locallyCommitted,
+    });
+    const diffFromOrigin = locallyCommitted;
+    if (diffFromOrigin || locallyCommitted) {
+      markers[note.id] = { diffFromOrigin, locallyCommitted };
+    }
+  }
+  return markers;
+}
+
+/**
+ * @param {string | null} localOid
+ * @param {string | null} remoteOid
+ * @returns {Promise<Set<string>>}
+ */
+async function getChangedNotePaths(localOid, remoteOid) {
+  const changed = new Set();
+  if (!localOid || !remoteOid) return changed;
+  if (localOid === remoteOid) return changed;
+  try {
+    const results = await git.walk({
+      fs,
+      dir,
+      trees: [git.TREE({ ref: localOid }), git.TREE({ ref: remoteOid })],
+      map: async (filepath, [localEntry, remoteEntry]) => {
+        if (filepath === '.') return undefined;
+        if (!filepath.startsWith('notes/')) return undefined;
+        const [localType, remoteType] = await Promise.all([
+          localEntry ? localEntry.type() : null,
+          remoteEntry ? remoteEntry.type() : null,
+        ]);
+        if (localType === 'tree' || remoteType === 'tree') {
+          return undefined;
+        }
+        if (!localEntry || !remoteEntry) return filepath;
+        const [localEntryOid, remoteEntryOid] = await Promise.all([
+          localEntry.oid(),
+          remoteEntry.oid(),
+        ]);
+        if (localEntryOid !== remoteEntryOid) return filepath;
+        return undefined;
+      },
+    });
+    results.forEach((filepath) => {
+      if (typeof filepath === 'string') {
+        changed.add(filepath);
+      }
+    });
+  } catch (err) {
+    console.warn('walk diff failed', err);
+  }
+  return changed;
+}
+
+async function refreshNoteMarkers() {
+  noteMarkersById = await buildNoteMarkers(notes);
+}
+
+async function refreshNotesList() {
+  await refreshNoteMarkers();
+  renderNotesList();
 }
 
 function randomId() {
@@ -509,7 +600,7 @@ async function createNote() {
   notes.unshift(note);
   await saveNoteFile(note);
   currentId = id;
-  renderNotesList();
+  await refreshNotesList();
   openNote(note, { source: 'user' });
 }
 
@@ -544,7 +635,7 @@ async function deleteCurrentNote() {
     notes.splice(targetIndex, 1);
   }
   currentId = notes[0]?.id ?? null;
-  renderNotesList();
+  await refreshNotesList();
   if (notes[0]) {
     await openNote(notes[0], { source: 'system' });
   } else {
@@ -596,10 +687,11 @@ async function saveAndCommit() {
     } else {
       note.updatedAt = await getLatestCommitTimestamp(filepath);
     }
+    await loadNotes();
   }
   setStatusUi(modified ? 'committed locally' : 'no changes');
 
-  renderNotesList();
+  await refreshNotesList();
   lastSavedMarkdown = currentMarkdown;
   setHasUnsavedChanges(false);
   return modified;
@@ -633,7 +725,7 @@ async function pushChanges() {
     await merge({ abortOnConflict: false });
     await refreshWorkingTree();
     await loadNotes();
-    renderNotesList();
+    await refreshNotesList();
   } catch (err) {
     if (
       err instanceof git.Errors.MergeConflictError ||
@@ -641,7 +733,7 @@ async function pushChanges() {
     ) {
       console.error(err);
       await loadNotes();
-      renderNotesList();
+      await refreshNotesList();
       if (currentId) {
         const note = notes.find((entry) => entry.id === currentId);
         if (note) {
@@ -673,8 +765,22 @@ async function pushChanges() {
       git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
     ]);
+    if (postLocalOid) {
+      try {
+        await git.writeRef({
+          fs,
+          dir,
+          ref: 'refs/remotes/origin/main',
+          value: postLocalOid,
+          force: true,
+        });
+      } catch (err) {
+        console.warn('failed to update origin tracking ref', err);
+      }
+    }
     console.log('[push] refs:after', { postLocalOid, postRemoteOid });
     setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
+    await refreshNotesList();
   } catch (err) {
     if (err instanceof git.Errors.PushRejectedError) {
       const upToDate = await isUpToDateWithRemote();
@@ -697,7 +803,7 @@ async function pullChanges() {
       await refreshWorkingTree();
     }
     await loadNotes();
-    renderNotesList();
+    await refreshNotesList();
     const [localOid, remoteOid] = await Promise.all([
       git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
@@ -728,7 +834,7 @@ async function pullChanges() {
         try {
           await resetToRemote();
           await loadNotes();
-          renderNotesList();
+          await refreshNotesList();
           setStatusUi('pulled (remote)');
           return;
         } catch (resetErr) {
@@ -761,6 +867,7 @@ async function resetNotesToOrigin() {
     await fetch();
     await resetToRemote();
     await refreshWorkingTree();
+    await removeLocalOnlyNotes();
     await loadNotes();
     currentId = notes[0]?.id ?? null;
     isViewingHistorySnapshot = false;
@@ -782,12 +889,39 @@ async function resetNotesToOrigin() {
       historySelectEl.disabled = true;
       showListOnMobile();
     }
-    renderNotesList();
+    await refreshNotesList();
     setHasUnsavedChanges(false);
     setStatusUi('reset to origin');
   } catch (err) {
     console.error(err);
     setStatusUi('reset failed');
+  }
+}
+
+async function removeLocalOnlyNotes() {
+  let matrix = [];
+  try {
+    matrix = await statusMatrix();
+  } catch (err) {
+    console.warn('statusMatrix failed', err);
+    return;
+  }
+  const localOnly = matrix.filter(([path, head]) => head === 0 && path.startsWith('notes/'));
+  for (const [path] of localOnly) {
+    try {
+      await pfs.unlink(`${dir}/${path}`);
+    } catch (err) {
+      if (getErrorCode(err) !== 'ENOENT') {
+        console.warn('failed to remove local note', err);
+      }
+    }
+    try {
+      await remove({ filepath: path });
+    } catch (err) {
+      if (getErrorCode(err) !== 'NotFoundError') {
+        console.warn('failed to unstage local note', err);
+      }
+    }
   }
 }
 
@@ -813,7 +947,7 @@ async function bootstrap() {
     await merge();
     await refreshWorkingTree();
     await loadNotes();
-    renderNotesList();
+    await refreshNotesList();
     didLoadNotes = true;
     const committed = await commitMergeConflictMarkers();
     setStatusUi(committed ? 'merge conflict committed' : 'synced');
@@ -831,7 +965,7 @@ async function bootstrap() {
 
   if (!didLoadNotes) {
     await loadNotes();
-    renderNotesList();
+    await refreshNotesList();
   }
   updateCurrentNoteState();
   await renderCurrentNoteHistory();

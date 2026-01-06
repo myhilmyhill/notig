@@ -138,8 +138,9 @@ export function setEditorReadOnly(readOnly) {
  * @param {{id: string; body: string; updatedAt?: number}[]} notes
  * @param {string | null} currentId
  * @param {(note: {id: string; body: string; updatedAt?: number}) => Promise<void> | void} onOpenNote
+ * @param {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} [noteMarkers]
  */
-export function renderNotes(notes, currentId, onOpenNote) {
+export function renderNotes(notes, currentId, onOpenNote, noteMarkers = {}) {
   listEl.innerHTML = '';
   let currentGroupLabel = '';
   notes.forEach((note) => {
@@ -167,6 +168,17 @@ export function renderNotes(notes, currentId, onOpenNote) {
       tagsEl.className = 'note-tags';
       tagsEl.textContent = tags.join(', ');
       li.appendChild(tagsEl);
+    }
+    const markers = noteMarkers[note.id];
+    if (markers && (markers.diffFromOrigin || markers.locallyCommitted)) {
+      li.classList.add('has-marker');
+      if (markers.locallyCommitted && markers.diffFromOrigin) {
+        li.classList.add('marker-both');
+      } else if (markers.locallyCommitted) {
+        li.classList.add('marker-local');
+      } else if (markers.diffFromOrigin) {
+        li.classList.add('marker-origin');
+      }
     }
     li.dataset.id = note.id;
     if (note.id === currentId) {
