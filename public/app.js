@@ -559,7 +559,7 @@ async function listNoteFiles(rootDir) {
 }
 
 /**
- * @param {{useCommitTimestamp?: boolean; commitDepth?: number; onBatch?: () => void}} [options]
+ * @param {{useCommitTimestamp?: boolean; onBatch?: () => void}} [options]
  */
 async function loadNotes(options = {}) {
   const { useCommitTimestamp = true, onBatch } = options;
@@ -580,11 +580,11 @@ async function loadNotes(options = {}) {
         const parsed = parseNoteBody(body);
         const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
         let updatedAt = frontMatterUpdatedAt;
+        if (typeof updatedAt !== 'number' && useCommitTimestamp) {
+          updatedAt = await getLatestCommitTimestamp(relPath);
+        }
         if (typeof updatedAt !== 'number' && typeof mtimeMs === 'number') {
           updatedAt = mtimeMs;
-        }
-        if (typeof updatedAt !== 'number' && useCommitTimestamp) {
-          updatedAt = await getLatestCommitTimestamp(relPath, 1);
         }
         return {
           id: relId,
@@ -1108,7 +1108,7 @@ async function bootstrap() {
     await merge();
     await refreshWorkingTree();
     await loadNotes({
-      useCommitTimestamp: false,
+      useCommitTimestamp: true,
       onBatch: () => {
         renderNotesList({ preserveScroll: true, skipAutoLoad: true });
       },
@@ -1131,7 +1131,7 @@ async function bootstrap() {
 
   if (!didLoadNotes) {
     await loadNotes({
-      useCommitTimestamp: false,
+      useCommitTimestamp: true,
       onBatch: () => {
         renderNotesList({ preserveScroll: true, skipAutoLoad: true });
       },

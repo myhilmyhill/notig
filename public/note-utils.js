@@ -1,5 +1,5 @@
 'use strict';
-import { logFileChanges } from './git-api.js';
+import { logFileChanges, getBlobOidAtCommit } from './git-api.js';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('ja-JP', {
   dateStyle: 'medium',
@@ -153,12 +153,27 @@ export function getNoteUpdatedAt(parsed) {
  * @param {number} [depth]
  * @returns {Promise<number | undefined>}
  */
-export async function getLatestCommitTimestamp(filepath, depth) {
+export async function getLatestCommitTimestamp(filepath, depth = 5) {
   try {
-    const commits = await logFileChanges(filepath, depth);
-    const ts = commits[0]?.commit?.author?.timestamp;
-    if (typeof ts !== 'number') return undefined;
-    return ts * 1000;
+    let commits = await logFileChanges(filepath, depth);
+    for (const entry of commits) {
+      const blobOid = await getBlobOidAtCommit(entry.oid, filepath);
+      if (!blobOid) continue;
+      const ts = entry.commit?.author?.timestamp;
+      if (typeof ts !== 'number') continue;
+      return ts * 1000;
+    }
+    if (typeof depth === 'number' && depth < 20) {
+      commits = await logFileChanges(filepath, 20);
+      for (const entry of commits) {
+        const blobOid = await getBlobOidAtCommit(entry.oid, filepath);
+        if (!blobOid) continue;
+        const ts = entry.commit?.author?.timestamp;
+        if (typeof ts !== 'number') continue;
+        return ts * 1000;
+      }
+    }
+    return undefined;
   } catch (err) {
     return undefined;
   }
