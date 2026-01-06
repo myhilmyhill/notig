@@ -173,10 +173,13 @@ export async function getHistoryContent(oid, filepath) {
 
 /**
  * @param {string} filepath
+ * @param {number} [depth]
  * @returns {Promise<Awaited<ReturnType<typeof log>>>}
  */
-export async function logFileChanges(filepath) {
-  const commits = await log({ filepath });
+export async function logFileChanges(filepath, depth) {
+  const commits = await log(
+    typeof depth === 'number' ? { filepath, depth } : { filepath }
+  );
   /** @type {Awaited<ReturnType<typeof log>>} */
   const filtered = [];
   for (const entry of commits) {

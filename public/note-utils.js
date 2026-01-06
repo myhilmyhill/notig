@@ -150,11 +150,12 @@ export function getNoteUpdatedAt(parsed) {
 
 /**
  * @param {string} filepath
+ * @param {number} [depth]
  * @returns {Promise<number | undefined>}
  */
-export async function getLatestCommitTimestamp(filepath) {
+export async function getLatestCommitTimestamp(filepath, depth) {
   try {
-    const commits = await logFileChanges(filepath);
+    const commits = await logFileChanges(filepath, depth);
     const ts = commits[0]?.commit?.author?.timestamp;
     if (typeof ts !== 'number') return undefined;
     return ts * 1000;

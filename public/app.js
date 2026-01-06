@@ -58,6 +58,7 @@ import {
   showListOnMobile as showListOnMobileUi,
   setActiveNoteInList,
   setEditorReadOnly,
+  listEl,
   renderNotes,
   renderTagFilterOptions,
   renderNoteHistory,
@@ -83,6 +84,11 @@ let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
 let currentTagFilter = '';
 let historyMarkdown = '';
+const NOTES_PAGE_SIZE = 50;
+const NOTES_SCROLL_THRESHOLD_PX = 120;
+const NOTES_LOAD_BATCH_SIZE = 40;
+let visibleNotesCount = 0;
+let hasPendingNotesScroll = false;
 
 /**
  * @param {boolean} next
@@ -140,14 +146,48 @@ function getFilteredNotes() {
   return notes.filter((note) => getTagsForNote(note).includes(currentTagFilter));
 }
 
-function renderNotesList() {
+function clampVisibleNotesCount(total) {
+  if (!visibleNotesCount) {
+    visibleNotesCount = Math.min(total, NOTES_PAGE_SIZE);
+    return;
+  }
+  visibleNotesCount = Math.min(visibleNotesCount, total);
+}
+
+function getNotesScrollContainer() {
+  return listEl.closest('#sidebar') ?? listEl;
+}
+
+function renderNotesList(options = {}) {
+  const {
+    preserveScroll = false,
+    resetVisibleCount = false,
+    scrollToTop = false,
+    skipAutoLoad = false,
+  } = options;
   updateTagFilterOptions();
+  const filteredNotes = getFilteredNotes();
+  if (resetVisibleCount) {
+    visibleNotesCount = Math.min(filteredNotes.length, NOTES_PAGE_SIZE);
+  } else {
+    clampVisibleNotesCount(filteredNotes.length);
+  }
+  const scrollContainer = getNotesScrollContainer();
+  const prevScrollTop = preserveScroll ? scrollContainer.scrollTop : 0;
   renderNotes(
-    getFilteredNotes(),
+    filteredNotes.slice(0, visibleNotesCount),
     currentId,
     (note) => openNote(note, { source: 'user' }),
     noteMarkersById
   );
+  if (preserveScroll) {
+    scrollContainer.scrollTop = prevScrollTop;
+  } else if (scrollToTop) {
+    scrollContainer.scrollTop = 0;
+  }
+  if (!skipAutoLoad) {
+    maybeLoadMoreNotes();
+  }
 }
 
 function showListOnMobile(options = {}) {
@@ -160,6 +200,28 @@ function showListOnMobile(options = {}) {
     return;
   }
   replaceHistoryState({ view: 'list' });
+}
+
+function maybeLoadMoreNotes() {
+  const filteredNotes = getFilteredNotes();
+  if (visibleNotesCount >= filteredNotes.length) return;
+  const scrollContainer = getNotesScrollContainer();
+  const remaining =
+    scrollContainer.scrollHeight -
+    scrollContainer.scrollTop -
+    scrollContainer.clientHeight;
+  if (remaining > NOTES_SCROLL_THRESHOLD_PX) return;
+  visibleNotesCount = Math.min(filteredNotes.length, visibleNotesCount + NOTES_PAGE_SIZE);
+  renderNotesList({ preserveScroll: true, skipAutoLoad: true });
+}
+
+function handleNotesScroll() {
+  if (hasPendingNotesScroll) return;
+  hasPendingNotesScroll = true;
+  requestAnimationFrame(() => {
+    hasPendingNotesScroll = false;
+    maybeLoadMoreNotes();
+  });
 }
 
 /**
@@ -255,6 +317,16 @@ async function refreshNotesList() {
 
 function randomId() {
   return crypto.randomUUID();
+}
+
+/**
+ * @param {string} filePath
+ * @returns {string}
+ */
+function getNoteIdFromPath(filePath) {
+  return filePath.startsWith(`${notesDir}/`)
+    ? filePath.slice(notesDir.length + 1)
+    : filePath;
 }
 
 /**
@@ -394,11 +466,21 @@ async function cloneRepo() {
 }
 
 /**
+ * @param {{mtimeMs?: number; mtime?: Date}} stats
+ * @returns {number | undefined}
+ */
+function getStatTimestamp(stats) {
+  if (typeof stats.mtimeMs === 'number') return stats.mtimeMs;
+  if (stats.mtime instanceof Date) return stats.mtime.getTime();
+  return undefined;
+}
+
+/**
  * @param {string} rootDir
- * @returns {Promise<string[]>}
+ * @returns {Promise<{path: string; mtimeMs?: number}[]>}
  */
 async function listNoteFiles(rootDir) {
-  /** @type {string[]} */
+  /** @type {{path: string; mtimeMs?: number}[]} */
   const files = [];
 
   async function walk(currentDir) {
@@ -423,7 +505,7 @@ async function listNoteFiles(rootDir) {
       if (stats.isDirectory()) {
         await walk(filePath);
       } else if (stats.isFile()) {
-        files.push(filePath);
+        files.push({ path: filePath, mtimeMs: getStatTimestamp(stats) });
       }
     }
   }
@@ -432,34 +514,69 @@ async function listNoteFiles(rootDir) {
   return files;
 }
 
-async function loadNotes() {
+/**
+ * @param {{useCommitTimestamp?: boolean; commitDepth?: number; onBatch?: () => void}} [options]
+ */
+async function loadNotes(options = {}) {
+  const { useCommitTimestamp = true, onBatch } = options;
   const files = await listNoteFiles(notesDir);
 
   /** @type {Note[]} */
   const loadedNotes = [];
-  for (const filePath of files) {
-    const relId = filePath.startsWith(`${notesDir}/`)
-      ? filePath.slice(notesDir.length + 1)
-      : filePath;
-    const relPath = getNoteFilePath({ id: relId });
-    try {
-      /** @type {string} */
-      const body = await pfs.readFile(filePath, 'utf8');
-      const parsed = parseNoteBody(body);
-      const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
-      const updatedAt =
-        typeof frontMatterUpdatedAt === 'number'
-          ? frontMatterUpdatedAt
-          : await getLatestCommitTimestamp(relPath);
-      loadedNotes.push({
-        id: relId,
-        body,
-        updatedAt,
-      });
-    } catch (err) {
-      if (getErrorCode(err) === 'ENOENT') continue;
-      console.warn(`failed to read note ${filePath}`, err);
+  /** @type {{path: string; mtimeMs?: number}[]} */
+  let batch = [];
+
+  async function loadBatch(entries) {
+    const results = await Promise.all(entries.map(async ({ path, mtimeMs }) => {
+      const relId = getNoteIdFromPath(path);
+      const relPath = getNoteFilePath({ id: relId });
+      try {
+        /** @type {string} */
+        const body = await pfs.readFile(path, 'utf8');
+        const parsed = parseNoteBody(body);
+        const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
+        let updatedAt = frontMatterUpdatedAt;
+        if (typeof updatedAt !== 'number' && typeof mtimeMs === 'number') {
+          updatedAt = mtimeMs;
+        }
+        if (typeof updatedAt !== 'number' && useCommitTimestamp) {
+          updatedAt = await getLatestCommitTimestamp(relPath, 1);
+        }
+        return {
+          id: relId,
+          body,
+          updatedAt,
+        };
+      } catch (err) {
+        if (getErrorCode(err) === 'ENOENT') return null;
+        console.warn(`failed to read note ${path}`, err);
+        return null;
+      }
+    }));
+
+    results.forEach((note) => {
+      if (note) {
+        loadedNotes.push(note);
+      }
+    });
+    if (onBatch) {
+      notes = loadedNotes
+        .slice()
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      onBatch();
     }
+  }
+
+  for (const entry of files) {
+    batch.push(entry);
+    if (batch.length >= NOTES_LOAD_BATCH_SIZE) {
+      const nextBatch = batch;
+      batch = [];
+      await loadBatch(nextBatch);
+    }
+  }
+  if (batch.length) {
+    await loadBatch(batch);
   }
 
   notes = loadedNotes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -946,7 +1063,12 @@ async function bootstrap() {
   try {
     await merge();
     await refreshWorkingTree();
-    await loadNotes();
+    await loadNotes({
+      useCommitTimestamp: false,
+      onBatch: () => {
+        renderNotesList({ preserveScroll: true, skipAutoLoad: true });
+      },
+    });
     await refreshNotesList();
     didLoadNotes = true;
     const committed = await commitMergeConflictMarkers();
@@ -964,7 +1086,12 @@ async function bootstrap() {
   }
 
   if (!didLoadNotes) {
-    await loadNotes();
+    await loadNotes({
+      useCommitTimestamp: false,
+      onBatch: () => {
+        renderNotesList({ preserveScroll: true, skipAutoLoad: true });
+      },
+    });
     await refreshNotesList();
   }
   updateCurrentNoteState();
@@ -1023,7 +1150,7 @@ newBtn.addEventListener('click', () => {
 
 tagFilterEl.addEventListener('change', () => {
   currentTagFilter = tagFilterEl.value;
-  renderNotesList();
+  renderNotesList({ resetVisibleCount: true, scrollToTop: true });
 });
 
 deleteBtn.addEventListener('click', () => {
@@ -1045,6 +1172,9 @@ historySelectEl.addEventListener('change', () => {
   });
 });
 applyMobileUiState();
+
+const notesScrollContainer = getNotesScrollContainer();
+notesScrollContainer.addEventListener('scroll', handleNotesScroll);
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {
