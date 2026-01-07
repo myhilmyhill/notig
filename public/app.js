@@ -85,6 +85,8 @@ let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
 let currentTagFilter = '';
 let historyMarkdown = '';
+const historyCacheById = new Map();
+const historyLoadStateById = new Map();
 const NOTES_PAGE_SIZE = 50;
 const NOTES_SCROLL_THRESHOLD_PX = 120;
 const NOTES_LOAD_BATCH_SIZE = 40;
@@ -563,6 +565,7 @@ async function listNoteFiles(rootDir) {
  */
 async function loadNotes(options = {}) {
   const { useCommitTimestamp = true, onBatch } = options;
+  clearHistoryCache();
   const files = await listNoteFiles(notesDir);
 
   /** @type {Note[]} */
@@ -624,6 +627,76 @@ async function loadNotes(options = {}) {
   }
 
   notes = loadedNotes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+}
+
+function clearHistoryCache() {
+  historyCacheById.clear();
+  historyLoadStateById.clear();
+}
+
+function setHistoryUiDisabled(isDisabled) {
+  historySelectEl.disabled = isDisabled;
+}
+
+/**
+ * @param {string} noteId
+ * @returns {Promise<void>}
+ */
+async function loadAndRenderHistory(noteId) {
+  if (historyCacheById.has(noteId)) {
+    if (currentId === noteId) {
+      const cached = historyCacheById.get(noteId);
+      renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
+    }
+    return;
+  }
+  if (historyLoadStateById.get(noteId)) return;
+
+  historyLoadStateById.set(noteId, true);
+  if (currentId === noteId) {
+    renderNoteHistory([], { emptyMessage: '履歴を読み込んでいます' });
+  }
+
+  try {
+    const filepath = getNoteFilePath({ id: noteId });
+    const commits = await logFileChanges(filepath);
+    const validCommits = commits.filter(
+      (entry) => typeof entry.commit?.author?.timestamp === 'number'
+    );
+    if (!validCommits.length) {
+      historyCacheById.set(noteId, {
+        entries: [],
+        emptyMessage: '履歴がありません',
+      });
+      return;
+    }
+
+    const entries = validCommits.map((entry) => {
+      const ts = entry.commit?.author?.timestamp;
+      return {
+        oid: entry.oid,
+        label: typeof ts === 'number' ? formatUpdatedAt(ts * 1000) : entry.oid,
+      };
+    });
+    historyCacheById.set(noteId, {
+      entries,
+      emptyMessage: '履歴がありません',
+    });
+  } catch (err) {
+    console.warn('failed to load note history', err);
+    historyCacheById.set(noteId, {
+      entries: [],
+      emptyMessage: '履歴を取得できません',
+    });
+  } finally {
+    historyLoadStateById.delete(noteId);
+    if (currentId === noteId) {
+      const cached = historyCacheById.get(noteId);
+      if (cached) {
+        renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
+      }
+    }
+  }
 }
 
 /**
@@ -694,38 +767,37 @@ function showCurrentInEditor() {
   isApplyingMarkdown = false;
 }
 
-async function renderCurrentNoteHistory() {
+async function renderCurrentNoteHistory(options = {}) {
   if (!currentId) {
     renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
     historySelectEl.value = '';
-    historySelectEl.disabled = true;
+    setHistoryUiDisabled(true);
     return;
   }
-  historySelectEl.disabled = false;
+  setHistoryUiDisabled(false);
 
-  try {
-    const filepath = getNoteFilePath({ id: currentId });
-    const commits = await logFileChanges(filepath);
-    const validCommits = commits.filter(
-      (entry) => typeof entry.commit?.author?.timestamp === 'number'
-    );
-    if (!validCommits.length) {
-      renderNoteHistory([], { emptyMessage: '履歴がありません' });
-      return;
-    }
-
-    const entries = validCommits.map((entry) => {
-      const ts = entry.commit?.author?.timestamp;
-      return {
-        oid: entry.oid,
-        label: typeof ts === 'number' ? formatUpdatedAt(ts * 1000) : entry.oid,
-      };
-    });
-    renderNoteHistory(entries, { emptyMessage: '履歴がありません' });
-  } catch (err) {
-    console.warn('failed to load note history', err);
-    renderNoteHistory([], { emptyMessage: '履歴を取得できません' });
+  const cached = historyCacheById.get(currentId);
+  if (cached) {
+    renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
+    return;
   }
+
+  if (options.eager) {
+    await loadAndRenderHistory(currentId);
+    return;
+  }
+
+  renderNoteHistory([], { emptyMessage: '履歴を読み込むにはクリック' });
+  historySelectEl.value = '';
+}
+
+function requestHistoryLoad() {
+  if (!currentId) return;
+  if (historyCacheById.has(currentId)) return;
+  if (historyLoadStateById.get(currentId)) return;
+  loadAndRenderHistory(currentId).catch((err) => {
+    console.warn('failed to load note history', err);
+  });
 }
 
 /**
@@ -742,7 +814,7 @@ async function openNote(note, options = {}) {
   setEditorReadOnly(false);
   updateCurrentNoteState();
   setActiveNoteInList(currentId);
-  await renderCurrentNoteHistory();
+  renderCurrentNoteHistory();
   historySelectEl.value = '';
   showEditorOnMobile();
   if (options.source !== 'history') {
@@ -807,7 +879,7 @@ async function deleteCurrentNote() {
     updateCurrentNoteState();
     renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
     historySelectEl.value = '';
-    historySelectEl.disabled = true;
+    setHistoryUiDisabled(true);
     showListOnMobile();
   }
 }
@@ -1047,7 +1119,7 @@ async function resetNotesToOrigin() {
       updateCurrentNoteState();
       renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
       historySelectEl.value = '';
-      historySelectEl.disabled = true;
+      setHistoryUiDisabled(true);
       showListOnMobile();
     }
     await refreshNotesList();
@@ -1139,7 +1211,7 @@ async function bootstrap() {
     await refreshNotesList();
   }
   updateCurrentNoteState();
-  await renderCurrentNoteHistory();
+  renderCurrentNoteHistory();
   if (!hasInitializedHistoryState) {
     if (currentId) {
       updateHistoryForNote(currentId, { replace: true });
@@ -1215,6 +1287,8 @@ historySelectEl.addEventListener('change', () => {
     console.warn('failed to show history in editor', err);
   });
 });
+historySelectEl.addEventListener('focus', requestHistoryLoad);
+historySelectEl.addEventListener('pointerdown', requestHistoryLoad);
 applyMobileUiState();
 
 const notesScrollContainer = getNotesScrollContainer();
