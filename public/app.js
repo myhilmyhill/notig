@@ -393,6 +393,7 @@ function createEditor(markdown, options = {}) {
     autofocus: false,
     hooks: {
       addImageBlobHook: async (blob, callback) => {
+        if (!currentId) return;
         const imageUrl = await uploadImageToBlobs(blob, currentId);
         callback(imageUrl, blob.name);
       },
@@ -420,14 +421,12 @@ function createEditor(markdown, options = {}) {
 
 /**
  * @param {Blob} blob
- * @param {string | null} noteId
+ * @param {string} noteId
  * @returns {Promise<string>}
  */
 async function uploadImageToBlobs(blob, noteId) {
   const filename = getBlobFileName(blob);
-  const safeNoteId = noteId || 'misc';
-
-  const url = `/blobs/${encodeURIComponent(safeNoteId)}/${encodeURIComponent(filename)}`;
+  const url = `/blobs/${encodeURIComponent(noteId)}/${encodeURIComponent(filename)}`;
   const response = await globalThis.fetch(url, {
     method: 'POST',
     body: blob,
@@ -449,8 +448,6 @@ async function uploadImageToBlobs(blob, noteId) {
  * @returns {Promise<string>}
  */
 async function getUploadUrlFromResponse(response) {
-  const locationHeader =
-    response.headers.get('Location') ?? response.headers.get('location');
   const contentType = response.headers.get('Content-Type') || '';
 
   if (contentType.includes('application/json')) {
@@ -466,6 +463,7 @@ async function getUploadUrlFromResponse(response) {
     return trimmedBody;
   }
 
+  const locationHeader = response.headers.get('Location');
   if (locationHeader && locationHeader.trim()) {
     return locationHeader.trim();
   }
@@ -500,46 +498,23 @@ async function cloneRepo() {
 }
 
 /**
- * @param {{mtimeMs?: number; mtime?: Date}} stats
- * @returns {number | undefined}
- */
-function getStatTimestamp(stats) {
-  if (typeof stats.mtimeMs === 'number') return stats.mtimeMs;
-  if (stats.mtime instanceof Date) return stats.mtime.getTime();
-  return undefined;
-}
-
-/**
  * @param {string} rootDir
- * @returns {Promise<{path: string; mtimeMs?: number}[]>}
+ * @returns {Promise<{path: string}[]>}
  */
 async function listNoteFiles(rootDir) {
-  /** @type {{path: string; mtimeMs?: number}[]} */
+  /** @type {{path: string}[]} */
   const files = [];
 
   async function walk(currentDir) {
-    /** @type {string[]} */
-    let entries = [];
-    try {
-      entries = await pfs.readdir(currentDir);
-    } catch (err) {
-      if (getErrorCode(err) === 'ENOENT') return;
-      throw err;
-    }
+    const entries = await pfs.readdir(currentDir);
 
     for (const entry of entries) {
       const filePath = `${currentDir}/${entry}`;
-      let stats;
-      try {
-        stats = await pfs.stat(filePath);
-      } catch (err) {
-        if (getErrorCode(err) === 'ENOENT') continue;
-        throw err;
-      }
+      const stats = await pfs.stat(filePath);
       if (stats.isDirectory()) {
         await walk(filePath);
       } else if (stats.isFile()) {
-        files.push({ path: filePath, mtimeMs: getStatTimestamp(stats) });
+        files.push({ path: filePath });
       }
     }
   }
@@ -549,20 +524,21 @@ async function listNoteFiles(rootDir) {
 }
 
 /**
- * @param {{useCommitTimestamp?: boolean; onBatch?: () => void}} [options]
+ * @param {{onBatch?: () => void}} [options]
  */
 async function loadNotes(options = {}) {
-  const { useCommitTimestamp = true, onBatch } = options;
+  const { onBatch } = options;
+  const useCommitTimestamp = true;
   clearHistoryCache();
   const files = await listNoteFiles(notesDir);
 
   /** @type {Note[]} */
   const loadedNotes = [];
-  /** @type {{path: string; mtimeMs?: number}[]} */
+  /** @type {{path: string}[]} */
   let batch = [];
 
   async function loadBatch(entries) {
-    const results = await Promise.all(entries.map(async ({ path, mtimeMs }) => {
+    const results = await Promise.all(entries.map(async ({ path }) => {
       const relId = getNoteIdFromPath(path);
       const relPath = getNoteFilePath({ id: relId });
       try {
@@ -573,9 +549,6 @@ async function loadNotes(options = {}) {
         let updatedAt = frontMatterUpdatedAt;
         if (typeof updatedAt !== 'number' && useCommitTimestamp) {
           updatedAt = await getLatestCommitTimestamp(relPath);
-        }
-        if (typeof updatedAt !== 'number' && typeof mtimeMs === 'number') {
-          updatedAt = mtimeMs;
         }
         return {
           id: relId,
@@ -1037,11 +1010,7 @@ async function pullChanges() {
 }
 
 async function resetNotesToOrigin() {
-  const hasLocalEdits = hasUnsavedChanges || isViewingHistorySnapshot;
-  const message = hasLocalEdits
-    ? '未保存の変更を含むローカルの内容をすべて破棄してoriginに戻します。よろしいですか？'
-    : 'ローカルの内容をすべて破棄してoriginに戻します。よろしいですか？';
-  if (!window.confirm(message)) return;
+  if (!window.confirm('ローカルの内容をすべて破棄してoriginに戻します。よろしいですか？')) return;
 
   setStatusUi('resetting…');
   await fetch();
@@ -1078,20 +1047,8 @@ async function removeLocalOnlyNotes() {
   const matrix = await statusMatrix();
   const localOnly = matrix.filter(([path, head]) => head === 0 && path.startsWith('notes/'));
   for (const [path] of localOnly) {
-    try {
-      await pfs.unlink(`${dir}/${path}`);
-    } catch (err) {
-      if (getErrorCode(err) !== 'ENOENT') {
-        throw err;
-      }
-    }
-    try {
-      await remove({ filepath: path });
-    } catch (err) {
-      if (getErrorCode(err) !== 'NotFoundError') {
-        throw err;
-      }
-    }
+    await pfs.unlink(`${dir}/${path}`);
+    await remove({ filepath: path });
   }
 }
 
@@ -1117,7 +1074,6 @@ async function bootstrap() {
     await merge();
     await refreshWorkingTree();
     await loadNotes({
-      useCommitTimestamp: true,
       onBatch: () => {
         renderNotesList({ preserveScroll: true, skipAutoLoad: true });
       },
@@ -1135,7 +1091,6 @@ async function bootstrap() {
 
   if (!didLoadNotes) {
     await loadNotes({
-      useCommitTimestamp: true,
       onBatch: () => {
         renderNotesList({ preserveScroll: true, skipAutoLoad: true });
       },
