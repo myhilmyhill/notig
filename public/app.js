@@ -67,9 +67,7 @@ import {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch((error) => {
-      console.warn('Service worker registration failed:', error);
-    });
+    navigator.serviceWorker.register('./service-worker.js');
   });
 }
 
@@ -297,13 +295,7 @@ async function isOidInHistory(ref, targetOid) {
   let depth = step;
   let lastCount = 0;
   while (depth <= 2000) {
-    let entries = [];
-    try {
-      entries = await git.log({ fs, dir, ref, depth });
-    } catch (err) {
-      console.warn('log failed', err);
-      return false;
-    }
+    const entries = await git.log({ fs, dir, ref, depth });
     if (entries.some((entry) => entry.oid === targetOid)) {
       return true;
     }
@@ -325,38 +317,34 @@ async function getChangedNotePaths(localOid, remoteOid) {
   const changed = new Set();
   if (!localOid || !remoteOid) return changed;
   if (localOid === remoteOid) return changed;
-  try {
-    const results = await git.walk({
-      fs,
-      dir,
-      trees: [git.TREE({ ref: localOid }), git.TREE({ ref: remoteOid })],
-      map: async (filepath, [localEntry, remoteEntry]) => {
-        if (filepath === '.') return undefined;
-        if (!filepath.startsWith('notes/')) return undefined;
-        const [localType, remoteType] = await Promise.all([
-          localEntry ? localEntry.type() : null,
-          remoteEntry ? remoteEntry.type() : null,
-        ]);
-        if (localType === 'tree' || remoteType === 'tree') {
-          return undefined;
-        }
-        if (!localEntry || !remoteEntry) return filepath;
-        const [localEntryOid, remoteEntryOid] = await Promise.all([
-          localEntry.oid(),
-          remoteEntry.oid(),
-        ]);
-        if (localEntryOid !== remoteEntryOid) return filepath;
+  const results = await git.walk({
+    fs,
+    dir,
+    trees: [git.TREE({ ref: localOid }), git.TREE({ ref: remoteOid })],
+    map: async (filepath, [localEntry, remoteEntry]) => {
+      if (filepath === '.') return undefined;
+      if (!filepath.startsWith('notes/')) return undefined;
+      const [localType, remoteType] = await Promise.all([
+        localEntry ? localEntry.type() : null,
+        remoteEntry ? remoteEntry.type() : null,
+      ]);
+      if (localType === 'tree' || remoteType === 'tree') {
         return undefined;
-      },
-    });
-    results.forEach((filepath) => {
-      if (typeof filepath === 'string') {
-        changed.add(filepath);
       }
-    });
-  } catch (err) {
-    console.warn('walk diff failed', err);
-  }
+      if (!localEntry || !remoteEntry) return filepath;
+      const [localEntryOid, remoteEntryOid] = await Promise.all([
+        localEntry.oid(),
+        remoteEntry.oid(),
+      ]);
+      if (localEntryOid !== remoteEntryOid) return filepath;
+      return undefined;
+    },
+  });
+  results.forEach((filepath) => {
+    if (typeof filepath === 'string') {
+      changed.add(filepath);
+    }
+  });
   return changed;
 }
 
@@ -405,12 +393,8 @@ function createEditor(markdown, options = {}) {
     autofocus: false,
     hooks: {
       addImageBlobHook: async (blob, callback) => {
-        try {
-          const imageUrl = await uploadImageToBlobs(blob, currentId);
-          callback(imageUrl, blob.name);
-        } catch (err) {
-          console.error('image upload failed', err);
-        }
+        const imageUrl = await uploadImageToBlobs(blob, currentId);
+        callback(imageUrl, blob.name);
       },
     },
     events: {
@@ -470,13 +454,9 @@ async function getUploadUrlFromResponse(response) {
   const contentType = response.headers.get('Content-Type') || '';
 
   if (contentType.includes('application/json')) {
-    try {
-      const payload = await response.clone().json();
-      if (payload && typeof payload.url === 'string' && payload.url.trim()) {
-        return payload.url.trim();
-      }
-    } catch (err) {
-      // Fall through to plain text / Location handling.
+    const payload = await response.clone().json();
+    if (payload && typeof payload.url === 'string' && payload.url.trim()) {
+      return payload.url.trim();
     }
   }
 
@@ -604,8 +584,7 @@ async function loadNotes(options = {}) {
         };
       } catch (err) {
         if (getErrorCode(err) === 'ENOENT') return null;
-        console.warn(`failed to read note ${path}`, err);
-        return null;
+        throw err;
       }
     }));
 
@@ -691,11 +670,11 @@ async function loadAndRenderHistory(noteId) {
       emptyMessage: '履歴がありません',
     });
   } catch (err) {
-    console.warn('failed to load note history', err);
     historyCacheById.set(noteId, {
       entries: [],
       emptyMessage: '履歴を取得できません',
     });
+    throw err;
   } finally {
     historyLoadStateById.delete(noteId);
     if (currentId === noteId) {
@@ -749,18 +728,14 @@ function updateHistoryForNote(noteId, options = {}) {
 async function showHistoryInEditor(oid) {
   if (!currentId) return;
   const filepath = getNoteFilePath({ id: currentId });
-  try {
-    const body = await getHistoryContent(oid, filepath);
-    historyMarkdown = body;
-    isViewingHistorySnapshot = true;
-    setEditorReadOnly(true);
-    if (editor) {
-      isApplyingMarkdown = true;
-      editor.setMarkdown(body);
-      isApplyingMarkdown = false;
-    }
-  } catch (err) {
-    console.warn('failed to load history content in editor', err);
+  const body = await getHistoryContent(oid, filepath);
+  historyMarkdown = body;
+  isViewingHistorySnapshot = true;
+  setEditorReadOnly(true);
+  if (editor) {
+    isApplyingMarkdown = true;
+    editor.setMarkdown(body);
+    isApplyingMarkdown = false;
   }
 }
 
@@ -803,9 +778,7 @@ function requestHistoryLoad() {
   if (!currentId) return;
   if (historyCacheById.has(currentId)) return;
   if (historyLoadStateById.get(currentId)) return;
-  loadAndRenderHistory(currentId).catch((err) => {
-    console.warn('failed to load note history', err);
-  });
+  loadAndRenderHistory(currentId);
 }
 
 /**
@@ -940,25 +913,14 @@ async function saveAndCommit() {
 
 async function pushChanges() {
   if (hasUnsavedChanges && currentId && !isViewingHistorySnapshot) {
-    try {
-      await saveAndCommit();
-    } catch (err) {
-      console.error(err);
-      setStatusUi('commit failed');
-      return;
-    }
+    await saveAndCommit();
   }
   const [preLocalOid, preRemoteOid] = await Promise.all([
     git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
     git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
   ]);
-  console.log('[push] refs:before', { preLocalOid, preRemoteOid });
-  try {
-    const matrix = await statusMatrix();
-    console.log('[push] statusMatrix', formatStatusMatrix(matrix));
-  } catch (err) {
-    console.warn('[push] statusMatrix failed', err);
-  }
+  const matrix = await statusMatrix();
+  console.log('[push] statusMatrix', formatStatusMatrix(matrix));
   let conflictCommitted = false;
   try {
     setStatusUi('syncing…');
@@ -972,7 +934,6 @@ async function pushChanges() {
       err instanceof git.Errors.MergeConflictError ||
       err instanceof git.Errors.UnmergedPathsError
     ) {
-      console.error(err);
       await loadNotes();
       await refreshNotesList();
       if (currentId) {
@@ -981,21 +942,14 @@ async function pushChanges() {
           await openNote(note, { source: 'system' });
         }
       }
-      try {
-        conflictCommitted = await commitMergeConflictMarkers();
-      } catch (commitErr) {
-        console.error(commitErr);
-        setStatusUi('merge conflict commit failed');
-        return;
-      }
+
+      conflictCommitted = await commitMergeConflictMarkers();
       if (!conflictCommitted) {
         setStatusUi('merge conflict (markers created)');
         return;
       }
     } else {
-      console.error(err);
-      setStatusUi('push failed');
-      return;
+      throw err;
     }
   }
 
@@ -1007,17 +961,13 @@ async function pushChanges() {
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
     ]);
     if (postLocalOid) {
-      try {
-        await git.writeRef({
-          fs,
-          dir,
-          ref: 'refs/remotes/origin/main',
-          value: postLocalOid,
-          force: true,
-        });
-      } catch (err) {
-        console.warn('failed to update origin tracking ref', err);
-      }
+      await git.writeRef({
+        fs,
+        dir,
+        ref: 'refs/remotes/origin/main',
+        value: postLocalOid,
+        force: true,
+      });
     }
     console.log('[push] refs:after', { postLocalOid, postRemoteOid });
     setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
@@ -1030,8 +980,7 @@ async function pushChanges() {
         return;
       }
     }
-    console.error(err);
-    setStatusUi('push failed');
+    throw err;
   }
 }
 
@@ -1070,28 +1019,19 @@ async function pullChanges() {
     setStatusUi('pulled');
   } catch (err) {
     if (err instanceof git.Errors.MergeConflictError) {
-      console.log(err);
       if (!hasUnsavedChanges) {
-        try {
-          await resetToRemote();
-          await loadNotes();
-          await refreshNotesList();
-          setStatusUi('pulled (remote)');
-          return;
-        } catch (resetErr) {
-          console.error(resetErr);
-        }
+        await resetToRemote();
+        await loadNotes();
+        await refreshNotesList();
+        setStatusUi('pulled (remote)');
+        return;
       }
-      try {
-        const committed = await commitMergeConflictMarkers();
-        setStatusUi(committed ? 'merge conflict committed' : 'merge conflict (markers created)');
-      } catch (commitErr) {
-        console.error(commitErr);
-        setStatusUi('merge conflict commit failed');
-      }
+      
+      const committed = await commitMergeConflictMarkers();
+      setStatusUi(committed ? 'merge conflict committed' : 'merge conflict (markers created)');
+      
     } else {
-      console.error(err);
-      setStatusUi('pull failed');
+      throw err;
     }
   }
 }
@@ -1104,63 +1044,52 @@ async function resetNotesToOrigin() {
   if (!window.confirm(message)) return;
 
   setStatusUi('resetting…');
-  try {
-    await fetch();
-    await resetToRemote();
-    await refreshWorkingTree();
-    await removeLocalOnlyNotes();
-    await loadNotes();
-    currentId = notes[0]?.id ?? null;
-    isViewingHistorySnapshot = false;
-    historyMarkdown = '';
-    if (currentId) {
-      const note = notes.find((entry) => entry.id === currentId);
-      if (note) {
-        await openNote(note, { source: 'system' });
-      }
-    } else {
-      currentMarkdown = '';
-      lastSavedMarkdown = '';
-      if (editor) {
-        editor.setMarkdown('');
-      }
-      updateCurrentNoteState();
-      renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
-      historySelectEl.value = '';
-      setHistoryUiDisabled(true);
-      showListOnMobile();
+  await fetch();
+  await resetToRemote();
+  await refreshWorkingTree();
+  await removeLocalOnlyNotes();
+  await loadNotes();
+  currentId = notes[0]?.id ?? null;
+  isViewingHistorySnapshot = false;
+  historyMarkdown = '';
+  if (currentId) {
+    const note = notes.find((entry) => entry.id === currentId);
+    if (note) {
+      await openNote(note, { source: 'system' });
     }
-    await refreshNotesList();
-    setHasUnsavedChanges(false);
-    setStatusUi('reset to origin');
-  } catch (err) {
-    console.error(err);
-    setStatusUi('reset failed');
+  } else {
+    currentMarkdown = '';
+    lastSavedMarkdown = '';
+    if (editor) {
+      editor.setMarkdown('');
+    }
+    updateCurrentNoteState();
+    renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+    historySelectEl.value = '';
+    setHistoryUiDisabled(true);
+    showListOnMobile();
   }
+  await refreshNotesList();
+  setHasUnsavedChanges(false);
+  setStatusUi('reset to origin');
 }
 
 async function removeLocalOnlyNotes() {
-  let matrix = [];
-  try {
-    matrix = await statusMatrix();
-  } catch (err) {
-    console.warn('statusMatrix failed', err);
-    return;
-  }
+  const matrix = await statusMatrix();
   const localOnly = matrix.filter(([path, head]) => head === 0 && path.startsWith('notes/'));
   for (const [path] of localOnly) {
     try {
       await pfs.unlink(`${dir}/${path}`);
     } catch (err) {
       if (getErrorCode(err) !== 'ENOENT') {
-        console.warn('failed to remove local note', err);
+        throw err;
       }
     }
     try {
       await remove({ filepath: path });
     } catch (err) {
       if (getErrorCode(err) !== 'NotFoundError') {
-        console.warn('failed to unstage local note', err);
+        throw err;
       }
     }
   }
@@ -1180,8 +1109,8 @@ async function bootstrap() {
   try {
     await fetch();
   } catch (err) {
-    console.warn('initial fetch failed; continuing offline', err);
     setStatusUi('offline (local only)');
+    throw err;
   }
 
   try {
@@ -1199,13 +1128,8 @@ async function bootstrap() {
     setStatusUi(committed ? 'merge conflict committed' : 'synced');
   } catch (err) {
     if (err instanceof git.Errors.MergeConflictError) {
-      try {
-        const committed = await commitMergeConflictMarkers();
-        setStatusUi(committed ? 'merge conflict committed' : 'conflict');
-      } catch (commitErr) {
-        console.error(commitErr);
-        setStatusUi('merge conflict commit failed');
-      }
+      const committed = await commitMergeConflictMarkers();
+      setStatusUi(committed ? 'merge conflict committed' : 'conflict');
     }
   }
 
@@ -1231,31 +1155,19 @@ async function bootstrap() {
 }
 
 function handleCloneAction() {
-  cloneRepo().catch((err) => {
-    console.error(err);
-    setStatusUi('new note failed');
-  });
+  cloneRepo();
 }
 
 pushBtn.addEventListener('click', () => {
-  pushChanges().catch((err) => {
-    console.error(err);
-    setStatusUi('push failed');
-  });
+  pushChanges();
 });
 
 pullBtn.addEventListener('click', () => {
-  pullChanges().catch((err) => {
-    console.error(err);
-    setStatusUi('pull failed');
-  });
+  pullChanges();
 });
 
 resetBtn.addEventListener('click', () => {
-  resetNotesToOrigin().catch((err) => {
-    console.error(err);
-    setStatusUi('reset failed');
-  });
+  resetNotesToOrigin();
 });
 
 if (cloneBtn) {
@@ -1266,10 +1178,7 @@ if (emptyCloneBtn) {
 }
 
 newBtn.addEventListener('click', () => {
-  createNote().catch((err) => {
-    console.error(err);
-    setStatusUi('new note failed');
-  });
+  createNote();
 });
 
 tagFilterEl.addEventListener('change', () => {
@@ -1278,10 +1187,7 @@ tagFilterEl.addEventListener('change', () => {
 });
 
 deleteBtn.addEventListener('click', () => {
-  deleteCurrentNote().catch((err) => {
-    console.error(err);
-    setStatusUi('delete failed');
-  });
+  deleteCurrentNote();
 });
 
 historySelectEl.addEventListener('change', () => {
@@ -1291,9 +1197,7 @@ historySelectEl.addEventListener('change', () => {
     showCurrentInEditor();
     return;
   }
-  showHistoryInEditor(oid).catch((err) => {
-    console.warn('failed to show history in editor', err);
-  });
+  showHistoryInEditor(oid);
 });
 historySelectEl.addEventListener('focus', requestHistoryLoad);
 historySelectEl.addEventListener('pointerdown', requestHistoryLoad);
@@ -1344,12 +1248,12 @@ async function handlePopState(event) {
 }
 
 window.addEventListener('popstate', (event) => {
-  handlePopState(event).catch((err) => {
-    console.error('failed to handle history navigation', err);
-  });
+  handlePopState(event);
 });
 
-bootstrap().catch((err) => {
-  console.error(err);
-  setStatusUi('failed to start');
+window.addEventListener('unhandledrejection', (event) => {
+  console.error(event);
+  alert(`${String(event.reason.message)}`);
 });
+
+bootstrap();
