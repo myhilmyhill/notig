@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 'use strict';
 import {
   parseNoteBody,
@@ -34,8 +35,8 @@ export const pushBtn = getRequiredElement('push-notes');
 export const pullBtn = getRequiredElement('pull-notes');
 /** @type {HTMLButtonElement} */
 export const resetBtn = getRequiredElement('reset-notes');
-/** @type {HTMLButtonElement | null} */
-export const cloneBtn = document.getElementById('clone');
+/** @type {HTMLButtonElement} */
+export const cloneBtn = getRequiredElement('clone');
 /** @type {HTMLButtonElement} */
 export const emptyCloneBtn = getRequiredElement('empty-clone');
 /** @type {HTMLButtonElement} */
@@ -64,16 +65,25 @@ let baseStatusText = 'offline';
 let hasUnsavedChanges = false;
 let hasLocalCommits = false;
 
+/**
+ * @param {string} statusText
+ */
 export function setStatus(statusText) {
   baseStatusText = statusText;
   renderStatus();
 }
 
+/**
+ * @param {boolean} next
+ */
 export function setHasUnsavedChanges(next) {
   hasUnsavedChanges = next;
   renderStatus();
 }
 
+/**
+ * @param {boolean} next
+ */
 export function setHasLocalCommits(next) {
   hasLocalCommits = next;
   pushBtn.classList.toggle('has-local-commits', hasLocalCommits);
@@ -84,6 +94,9 @@ function renderStatus() {
   statusEl.textContent = `${baseStatusText}${suffix}`;
 }
 
+/**
+ * @param {boolean | undefined} isMissing
+ */
 export function setMissingConfig(isMissing) {
   bodyEl.classList.toggle('missing-config', isMissing);
 }
@@ -92,6 +105,9 @@ export function isMobileLayout() {
   return mobileMedia.matches || coarsePointerMedia.matches;
 }
 
+/**
+ * @param {boolean} hasCurrentNote
+ */
 export function applyMobileState(hasCurrentNote) {
   const isMobile = isMobileLayout();
   bodyEl.classList.toggle('is-mobile', isMobile);
@@ -104,6 +120,9 @@ export function applyMobileState(hasCurrentNote) {
   }
 }
 
+/**
+ * @param {boolean | undefined} hasCurrentNote
+ */
 export function updateCurrentNoteState(hasCurrentNote) {
   bodyEl.classList.toggle('has-current-note', hasCurrentNote);
   if (!hasCurrentNote) {
@@ -121,6 +140,9 @@ export function showListOnMobile() {
   bodyEl.classList.remove('show-editor');
 }
 
+/**
+ * @param {string | undefined} currentId
+ */
 export function setActiveNoteInList(currentId) {
   const items = listEl.querySelectorAll('li');
   items.forEach((item) => {
@@ -129,6 +151,9 @@ export function setActiveNoteInList(currentId) {
   });
 }
 
+/**
+ * @param {boolean} readOnly
+ */
 export function setEditorReadOnly(readOnly) {
   const editableNodes = editorHostEl.querySelectorAll('[contenteditable]');
   editableNodes.forEach((node) => {
@@ -141,12 +166,11 @@ export function setEditorReadOnly(readOnly) {
 }
 
 /**
- * @param {{id: string; body: string; updatedAt?: number}[]} notes
+ * @param {{id: string; body: string; updatedAt?: number; edited?: boolean}[]} notes
  * @param {string | null} currentId
- * @param {(note: {id: string; body: string; updatedAt?: number}) => Promise<void> | void} onOpenNote
- * @param {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} [noteMarkers]
+ * @param {(note: {id: string; body: string; updatedAt?: number; edited?: boolean}) => Promise<void> | void} onOpenNote
  */
-export function renderNotes(notes, currentId, onOpenNote, noteMarkers = {}) {
+export function renderNotes(notes, currentId, onOpenNote) {
   listEl.innerHTML = '';
   let currentGroupLabel = '';
   notes.forEach((note) => {
@@ -175,16 +199,8 @@ export function renderNotes(notes, currentId, onOpenNote, noteMarkers = {}) {
       tagsEl.textContent = tags.join(', ');
       li.appendChild(tagsEl);
     }
-    const markers = noteMarkers[note.id];
-    if (markers && (markers.diffFromOrigin || markers.locallyCommitted)) {
+    if (note.edited) {
       li.classList.add('has-marker');
-      if (markers.locallyCommitted && markers.diffFromOrigin) {
-        li.classList.add('marker-both');
-      } else if (markers.locallyCommitted) {
-        li.classList.add('marker-local');
-      } else if (markers.diffFromOrigin) {
-        li.classList.add('marker-origin');
-      }
     }
     li.dataset.id = note.id;
     if (note.id === currentId) {

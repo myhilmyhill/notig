@@ -1,4 +1,5 @@
-/* eslint-disable no-restricted-globals */
+/// <reference lib="webworker" />
+
 'use strict';
 
 const CACHE_NAME = 'notig-static-v11';

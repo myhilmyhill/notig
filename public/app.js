@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 'use strict';
 import { Editor } from 'https://esm.sh/@toast-ui/editor@3.2.2';
 import {
@@ -78,13 +79,11 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-/** @typedef {{id: string; body: string; updatedAt?: number}} Note */
+/** @typedef {{id: Readonly<string>; body: string; updatedAt?: number; edited?: boolean}} Note */
 
 
 /** @type {Note[]} */
 let notes = [];
-/** @type {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} */
-let noteMarkersById = {};
 /** @type {Note['id'] | null} */
 let currentId = null;
 /** @type {Editor | null} */
@@ -163,6 +162,9 @@ function getFilteredNotes() {
   return notes.filter((note) => getTagsForNote(note).includes(currentTagFilter));
 }
 
+/**
+ * @param {number} total
+ */
 function clampVisibleNotesCount(total) {
   if (!visibleNotesCount) {
     visibleNotesCount = Math.min(total, NOTES_PAGE_SIZE);
@@ -175,6 +177,10 @@ function getNotesScrollContainer() {
   return listEl.closest('#sidebar') ?? listEl;
 }
 
+/**
+ * 
+ * @param {{preserveScroll?: boolean; resetVisibleCount?: boolean; scrollToTop?: boolean; skipAutoLoad?: boolean;}} options 
+ */
 function renderNotesList(options = {}) {
   const {
     preserveScroll = false,
@@ -194,8 +200,7 @@ function renderNotesList(options = {}) {
   renderNotes(
     filteredNotes.slice(0, visibleNotesCount),
     currentId,
-    (note) => openNote(note, { source: 'user' }),
-    noteMarkersById
+    (note) => openNote(note, { source: 'user' })
   );
   if (preserveScroll) {
     scrollContainer.scrollTop = prevScrollTop;
@@ -207,6 +212,9 @@ function renderNotesList(options = {}) {
   }
 }
 
+/**
+ * @param {{source?: string}} options 
+ */
 function showListOnMobile(options = {}) {
   if (!isMobileLayout()) return;
   showListOnMobileUi();
@@ -250,11 +258,9 @@ function getNoteFilePath(note) {
 
 /**
  * @param {Note[]} sourceNotes
- * @returns {Promise<Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>>}
+ * @returns {Promise<void>}
  */
 async function buildNoteMarkers(sourceNotes) {
-  /** @type {Record<string, {diffFromOrigin?: boolean; locallyCommitted?: boolean}>} */
-  const markers = {};
   const [localOid, remoteOid] = await Promise.all([
     git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
     git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
@@ -267,18 +273,14 @@ async function buildNoteMarkers(sourceNotes) {
 
   for (const note of sourceNotes) {
     const filepath = getNoteFilePath(note);
-    const locallyCommitted = changedPaths.has(filepath);
+    const edited = changedPaths.has(filepath);
     console.log('[markers] note', {
       id: note.id,
       filepath,
-      locallyCommitted,
+      edited,
     });
-    const diffFromOrigin = locallyCommitted;
-    if (diffFromOrigin || locallyCommitted) {
-      markers[note.id] = { diffFromOrigin, locallyCommitted };
-    }
+    note.edited = edited;
   }
-  return markers;
 }
 
 /**
@@ -348,7 +350,7 @@ async function getChangedNotePaths(localOid, remoteOid) {
       return undefined;
     },
   });
-  results.forEach((filepath) => {
+  results.forEach((/** @type {any} */ filepath) => {
     if (typeof filepath === 'string') {
       changed.add(filepath);
     }
@@ -356,12 +358,8 @@ async function getChangedNotePaths(localOid, remoteOid) {
   return changed;
 }
 
-async function refreshNoteMarkers() {
-  noteMarkersById = await buildNoteMarkers(notes);
-}
-
 async function refreshNotesList() {
-  await refreshNoteMarkers();
+  await buildNoteMarkers(notes);
   renderNotesList();
 }
 
@@ -400,10 +398,10 @@ function createEditor(markdown, options = {}) {
     frontMatter: true,
     autofocus: false,
     hooks: {
-      addImageBlobHook: async (blob, callback) => {
+      addImageBlobHook: async (/** @type {Blob | File} */ blob, /** @type {(url: string, text?: string) => void} */ callback) => {
         if (!currentId) return;
         const imageUrl = await uploadImageToBlobs(blob, currentId);
-        callback(imageUrl, blob.name);
+        callback(imageUrl, 'name' in blob ? blob.name : '');
       },
     },
     events: {
@@ -513,6 +511,9 @@ async function listNoteFiles(rootDir) {
   /** @type {{path: string}[]} */
   const files = [];
 
+  /**
+   * @param {string} currentDir
+   */
   async function walk(currentDir) {
     const entries = await pfs.readdir(currentDir);
 
@@ -545,6 +546,9 @@ async function loadNotes(options = {}) {
   /** @type {{path: string}[]} */
   let batch = [];
 
+  /**
+   * @param {{ path: any; }[]} entries
+   */
   async function loadBatch(entries) {
     const results = await Promise.all(entries.map(async ({ path }) => {
       const relId = getNoteIdFromPath(path);
@@ -602,6 +606,9 @@ function clearHistoryCache() {
   historyLoadStateById.clear();
 }
 
+/**
+ * @param {boolean} isDisabled
+ */
 function setHistoryUiDisabled(isDisabled) {
   historySelectEl.disabled = isDisabled;
 }
@@ -676,16 +683,26 @@ async function saveNoteFile(note) {
   return relPath;
 }
 
+/**
+ * @param {{ view: string; id: any; }} state
+ */
 function pushHistoryState(state) {
   if (isHandlingPopState) return;
   history.pushState(state, '');
 }
 
+/**
+ * @param {{ view: string; id?: any; }} state
+ */
 function replaceHistoryState(state) {
   if (isHandlingPopState) return;
   history.replaceState(state, '');
 }
 
+/**
+ * @param {string} noteId
+ * @param {{replace?: boolean}} [options={}] 
+ */
 function updateHistoryForNote(noteId, options = {}) {
   let replace = options.replace ?? false;
   if (!replace && isMobileLayout()) {
@@ -731,6 +748,9 @@ function showCurrentInEditor() {
   isApplyingMarkdown = false;
 }
 
+/**
+ * @param {{eager?: boolean}} options 
+ */
 async function renderCurrentNoteHistory(options = {}) {
   if (!currentId) {
     renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
@@ -1331,6 +1351,9 @@ colorSchemeMedia.addEventListener('change', () => {
 mobileMedia.addEventListener('change', applyMobileUiState);
 coarsePointerMedia.addEventListener('change', applyMobileUiState);
 
+/**
+ * @param {PopStateEvent} event
+ */
 async function handlePopState(event) {
   isHandlingPopState = true;
   try {

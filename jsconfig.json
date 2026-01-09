@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "checkJs": true,
-    "lib": ["ESNext", "DOM"]
+    "strict": true,
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["ESNext"]
   }
 }

@@ -8,9 +8,20 @@ declare module 'https://esm.sh/@isomorphic-git/lightning-fs' {
 }
 
 declare module 'https://esm.sh/isomorphic-git' {
-  type GitFn = (options?: Record<string, unknown>) => Promise<void>;
+  type WalkerEntry = {
+    type: function(): Promise<'tree'|'blob'|'special'|'commit'>;
+    mode: function(): Promise<number>;
+    oid: function(): Promise<string>;
+    content: function(): Promise<Uint8Array|void>;
+    stat: function(): Promise<Stat>;
+  }
+  type GitFn = (options?: Record<string, unknown>) => Promise<string>;
   const git: {
     [x: string]: GitFn;
+    resolveRef: (options?: Record<string, unknown>) => Promise<string>;
+    walk: (options?: Record<string, unknown> & {
+      map: (filename: string, entries: Array<(WalkerEntry|null)>) => Promise<any>
+    }) => Promise<any>;
     log: (options?: Record<string, unknown>) => Promise<{ oid: string; commit: { parent: string | null; author: { timestamp: number } } | null }[]>;
     status: (options?: Record<string, unknown> & { filepath: string }) => Promise<string>;
     readBlob: (options?: Record<string, unknown>) => Promise<{ oid: string; blob: BufferSource }>;
