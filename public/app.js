@@ -69,6 +69,13 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js');
   });
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || data.type !== 'share-target') return;
+    if (data.payload && typeof data.payload === 'object') {
+      handleSharePayload(data.payload);
+    }
+  });
 }
 
 /** @typedef {{id: string; body: string; updatedAt?: number}} Note */
@@ -98,6 +105,7 @@ const NOTES_SCROLL_THRESHOLD_PX = 120;
 const NOTES_LOAD_BATCH_SIZE = 40;
 let visibleNotesCount = 0;
 let hasPendingNotesScroll = false;
+let hasHandledShareTarget = false;
 
 /**
  * @param {boolean} next
@@ -791,6 +799,146 @@ async function createNote() {
   openNote(note, { source: 'user' });
 }
 
+/**
+ * @param {{title?: string; text?: string; url?: string; rawQuery?: string}} payload
+ * @returns {string}
+ */
+function buildSharedNoteBody(payload) {
+  const title = payload.title?.trim() ?? '';
+  const titleLine = title ? `title: ${JSON.stringify(title)}` : 'title: ';
+  const url = getShareUrlFromPayload(payload);
+  const urlLine = url ? `url: ${url.replace(/\r?\n/g, ' ')}` : '';
+  const rawQuery = payload.rawQuery?.trim() ?? '';
+  const queryHash = rawQuery ? hashString(rawQuery) : '';
+  const parts = [];
+  if (queryHash) {
+    parts.push(`query_hash: ${queryHash}`);
+  }
+  if (payload.text?.trim()) {
+    parts.push(payload.text.trim());
+  }
+  if (payload.url?.trim()) {
+    parts.push(payload.url.trim());
+  }
+  const content = parts.join('\n\n');
+  const frontMatterLines = ['---', titleLine];
+  if (urlLine) {
+    frontMatterLines.push(urlLine);
+  }
+  if (queryHash) {
+    frontMatterLines.push(`query_hash: ${queryHash}`);
+  }
+  frontMatterLines.push('---');
+  return `${frontMatterLines.join('\n')}\n\n${content}\n`;
+}
+
+/**
+ * @returns {{title?: string; text?: string; url?: string; rawQuery?: string} | null}
+ */
+function getShareTargetPayloadFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const title = params.get('title') ?? '';
+  const text = params.get('text') ?? '';
+  const url = params.get('url') ?? '';
+  if (!title.trim() && !text.trim() && !url.trim()) return null;
+  return { title, text, url, rawQuery: window.location.search };
+}
+
+/**
+ * @param {{title?: string; text?: string; url?: string; rawQuery?: string}} payload
+ * @returns {string}
+ */
+function getShareUrlFromPayload(payload) {
+  const direct = payload.url?.trim() ?? '';
+  if (direct) return direct;
+  const text = payload.text?.trim() ?? '';
+  if (!text) return '';
+  const match = text.match(/https?:\/\/\S+/);
+  return match ? match[0] : '';
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function hashString(value) {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return (hash >>> 0).toString(16);
+}
+
+/**
+ * @param {Note} note
+ * @returns {string}
+ */
+function getNoteShareUrl(note) {
+  const parsed = parseNoteBody(note.body);
+  const urlValue = parsed.frontMatter.url ?? parsed.frontMatter.Url ?? '';
+  return typeof urlValue === 'string' ? urlValue.trim() : '';
+}
+
+function clearShareTargetParams() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete('title');
+  nextUrl.searchParams.delete('text');
+  nextUrl.searchParams.delete('url');
+  if (nextUrl.href !== window.location.href) {
+    history.replaceState(history.state, '', nextUrl);
+  }
+}
+
+/**
+ * @param {{title?: string; text?: string; url?: string}} payload
+ */
+async function createSharedNote(payload) {
+  const id = randomId();
+  const note = {
+    id,
+    body: buildSharedNoteBody(payload),
+  };
+  lastSavedMarkdown = note.body;
+  notes.unshift(note);
+  await saveNoteFile(note);
+  currentId = id;
+  await refreshNotesList();
+  await openNote(note, { source: 'user' });
+}
+
+/**
+ * @param {{title?: string; text?: string; url?: string}} payload
+ */
+async function handleSharePayload(payload) {
+  if (hasHandledShareTarget) return;
+  if (!payload || typeof payload !== 'object') return;
+  const shareUrl = getShareUrlFromPayload(payload);
+  if (shareUrl) {
+    const matched = notes.find((note) => getNoteShareUrl(note) === shareUrl) ?? null;
+    if (matched) {
+      hasHandledShareTarget = true;
+      setStatusUi('share opened existing');
+      clearShareTargetParams();
+      await openNote(matched, { source: 'user' });
+      return;
+    }
+  }
+  hasHandledShareTarget = true;
+  const hasContent = Boolean(
+    payload.title?.trim() || payload.text?.trim() || payload.url?.trim()
+  );
+  setStatusUi(hasContent ? 'share received' : 'share target opened (empty)');
+  clearShareTargetParams();
+  await createSharedNote(payload);
+}
+
+async function handleShareTarget() {
+  const payload = getShareTargetPayloadFromUrl();
+  if (!payload) return;
+  await handleSharePayload(payload);
+}
+
 async function deleteCurrentNote() {
   if (!currentId) return;
   const targetIndex = notes.findIndex((note) => note.id === currentId);
@@ -1211,4 +1359,10 @@ window.addEventListener('unhandledrejection', (event) => {
   alert(`${String(event.reason.message)}`);
 });
 
-bootstrap();
+bootstrap()
+  .catch((err) => {
+    console.error(err);
+  })
+  .finally(() => {
+    handleShareTarget();
+  });

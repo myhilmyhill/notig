@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-globals */
 'use strict';
 
-const CACHE_NAME = 'notig-static-v1';
+const CACHE_NAME = 'notig-static-v11';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -11,7 +11,6 @@ const PRECACHE_URLS = [
   './git-api.js',
   './note-utils.js',
   './manifest.webmanifest',
-  './icon.bmp',
   './icon-192.png',
   './icon-512.png',
 ];
@@ -37,10 +36,10 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
   const requestUrl = new URL(event.request.url);
   const isSameOrigin = requestUrl.origin === self.location.origin;
 
+  if (event.request.method !== 'GET') return;
   if (event.request.mode === 'navigate') {
     event.respondWith(
       caches.match('./index.html').then((cached) => cached || fetch(event.request))
