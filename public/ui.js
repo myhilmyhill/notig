@@ -62,7 +62,6 @@ if (headerEl) {
 }
 
 let baseStatusText = 'offline';
-let hasUnsavedChanges = false;
 let hasLocalCommits = false;
 
 /**
@@ -76,22 +75,13 @@ export function setStatus(statusText) {
 /**
  * @param {boolean} next
  */
-export function setHasUnsavedChanges(next) {
-  hasUnsavedChanges = next;
-  renderStatus();
-}
-
-/**
- * @param {boolean} next
- */
 export function setHasLocalCommits(next) {
   hasLocalCommits = next;
   pushBtn.classList.toggle('has-local-commits', hasLocalCommits);
 }
 
 function renderStatus() {
-  const suffix = hasUnsavedChanges ? ' (unsaved)' : '';
-  statusEl.textContent = `${baseStatusText}${suffix}`;
+  statusEl.textContent = `${baseStatusText}`;
 }
 
 /**
@@ -148,20 +138,6 @@ export function setActiveNoteInList(currentId) {
   items.forEach((item) => {
     if (item.dataset.role !== 'note') return;
     item.classList.toggle('active', item.dataset.id === currentId);
-  });
-}
-
-/**
- * @param {boolean} readOnly
- */
-export function setEditorReadOnly(readOnly) {
-  const editableNodes = editorHostEl.querySelectorAll('[contenteditable]');
-  editableNodes.forEach((node) => {
-    if (readOnly) {
-      node.setAttribute('contenteditable', 'false');
-      return;
-    }
-    node.setAttribute('contenteditable', 'true');
   });
 }
 

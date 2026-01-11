@@ -50,18 +50,16 @@ import {
   // colorSchemeMedia,
   mobileBackBtn,
   setStatus as setStatusUi,
-  setHasUnsavedChanges as setHasUnsavedChangesUi,
   setMissingConfig,
   isMobileLayout,
   applyMobileState,
   updateCurrentNoteState as updateCurrentNoteUiState,
   showListOnMobile as showListOnMobileUi,
-  setEditorReadOnly,
   setHasLocalCommits as setHasLocalCommitsUi,
   renderNoteHistory,
 } from './ui.js';
 import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
-import { clearEditorMarkdown, getCurrentEditorMarkdown, openNote, registerRenderCurrentNoteHistoryHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-detail.js';
+import { openNote, registerNoteOpenedHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-detail.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -341,14 +339,18 @@ async function loadNotes(options = {}) {
 }
 
 /**
- * @param {string} noteId
+ * @param {Note} note
  * @returns {Promise<void>}
  */
-async function loadAndRenderHistory(noteId) {
+async function loadAndRenderHistory(note) {
+  if (!note.updatedAt) {
+    renderNoteHistory([], { emptyMessage: '履歴がありません' });
+    return;
+  }
   renderNoteHistory([], { emptyMessage: '履歴を読み込んでいます' });
 
   try {
-    const filepath = getNoteFilePath({ id: noteId });
+    const filepath = getNoteFilePath(note);
     const commits = await logFileChanges(filepath);
     const validCommits = commits.filter(
       (entry) => typeof entry.commit?.author?.timestamp === 'number'
@@ -424,16 +426,10 @@ function updateHistoryForNote(noteId, options = {}) {
 /**
  * @param {Note} note
  */
-async function renderCurrentNoteHistory(note) {
+async function handleNoteOpened(note) {
   currentNote = note;
   historySelectEl.value = '';
-
-  if (!note.updatedAt) {
-    renderNoteHistory([], { emptyMessage: '履歴がありません' });
-    return;
-  }
-
-  await loadAndRenderHistory(note.id);
+  await loadAndRenderHistory(note);
 }
 
 async function createNote() {
@@ -618,7 +614,6 @@ async function deleteCurrentNote() {
   }
   currentNote = null;
   await refreshNotesList(notes);
-  clearEditorMarkdown();
   updateCurrentNoteState();
   renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
   historySelectEl.value = '';
@@ -627,30 +622,15 @@ async function deleteCurrentNote() {
 
 /**
  * @returns {Promise<boolean>}
- * @param {string} [currentId]
+ * @param {Note} note
  */
-async function saveAndCommit(currentId) {
-  if (!currentId) return false;
-  /** @type {Note} */
-  const note = {
-    id: currentId,
-    body: getCurrentEditorMarkdown(),
-  };
+async function saveAndCommit(note) {
   const parsed = parseNoteBody(note.body);
   const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
   if (typeof frontMatterUpdatedAt === 'number') {
     note.updatedAt = frontMatterUpdatedAt;
   }
   const filepath = await saveNoteFile(note);
-  const existing = notes.find((entry) => entry.id === currentId);
-  if (existing) {
-    existing.body = note.body;
-    if (note.updatedAt) {
-      existing.updatedAt = note.updatedAt;
-    }
-  } else {
-    notes.unshift(note);
-  }
   notes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   await add({ filepath });
   const s = await status({ filepath });
@@ -672,14 +652,8 @@ async function saveAndCommit(currentId) {
 
 async function pushChanges() {
   if (currentNote) {
-    await saveAndCommit();
+    await saveAndCommit(currentNote);
   }
-  const [preLocalOid, preRemoteOid] = await Promise.all([
-    git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
-    git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
-  ]);
-  const matrix = await statusMatrix();
-  console.log('[push] statusMatrix', formatStatusMatrix(matrix));
   let conflictCommitted = false;
   try {
     setStatusUi('syncing…');
@@ -749,10 +723,6 @@ async function pullChanges() {
     // }
     await loadNotes();
     await refreshNotesList(notes);
-    const [localOid, remoteOid] = await Promise.all([
-      git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
-      git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
-    ]);
     if (currentNote) {
       await openNote(currentNote, { source: 'system' });
     }
@@ -785,13 +755,11 @@ async function resetNotesToOrigin() {
   if (!window.confirm('ローカルの内容をすべて破棄してoriginに戻します。よろしいですか？')) return;
 
   setStatusUi('resetting…');
-  await fetch();
   await resetToRemote();
   await refreshWorkingTree();
   await removeLocalOnlyNotes();
   await loadNotes();
   currentNote = null;
-  clearEditorMarkdown();
   updateCurrentNoteState();
   renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
   historySelectEl.value = '';
@@ -905,7 +873,7 @@ historySelectEl.addEventListener('change', async () => {
   if (!currentNote) return;
   const oid = historySelectEl.value;
   if (!oid || oid === '__empty') {
-    showCurrentInEditor();
+    showCurrentInEditor(currentNote);
     return;
   }
   const filepath = getNoteFilePath(currentNote);
@@ -971,7 +939,7 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 registerSaveAndCommit(saveAndCommit);
-registerRenderCurrentNoteHistoryHandler(renderCurrentNoteHistory);
+registerNoteOpenedHandler(handleNoteOpened);
 
 bootstrap()
   .finally(() => {

@@ -4,26 +4,20 @@ import {
   showEditorOnMobile,
   setActiveNoteInList,
   colorSchemeMedia,
-  setEditorReadOnly,
   updateCurrentNoteState,
-  setHasUnsavedChanges,
   historySelectEl,
 } from './ui.js';
 
 /** @type {Editor | null} */
 let editor = null;
-let currentMarkdown = '';
-let lastSavedMarkdown = '';
-let isApplyingMarkdown = false;
-let historyMarkdown = '';
 
-/** @type {((noteId: string) => Promise<boolean> | boolean | void) | null} */
+/** @type {((note: import('./app.js').Note) => Promise<boolean> | boolean | void) | null} */
 let saveAndCommitHandler = null;
 /** @type {((note: import('./app.js').Note) => Promise<void> | void) | null} */
-let renderCurrentNoteHistoryHandler = null;
+let noteOpenedHandler = null;
 
 /**
- * @param {(noteId: string) => Promise<boolean> | boolean | void} handler
+ * @param {(note: import('./app.js').Note) => Promise<boolean> | boolean | void} handler
  */
 export function registerSaveAndCommit(handler) {
   saveAndCommitHandler = handler;
@@ -32,94 +26,86 @@ export function registerSaveAndCommit(handler) {
 /**
  * @param {(note: import('./app.js').Note) => Promise<void> | void} handler
  */
-export function registerRenderCurrentNoteHistoryHandler(handler) {
-  renderCurrentNoteHistoryHandler = handler ?? null;
+export function registerNoteOpenedHandler(handler) {
+  noteOpenedHandler = handler;
 }
 
 /**
- * @param {string} currentId
- * @param {string} markdown
- * @param {{viewer?: boolean; preserveCurrentMarkdown?: boolean;}} options
+ * @param {import('./app.js').Note} note
  */
-function createEditor(currentId, markdown, options = {}) {
+function createEditor(note) {
   if (editor) {
     editor.destroy();
   }
-  editor = new Editor({
+  editor = Editor.factory({
     el: editorHostEl,
     height: '100%',
     initialEditType: 'wysiwyg',
     previewStyle: 'tab',
-    viewer: Boolean(options.viewer),
+    viewer: false,
     previewHighlight: false,
     usageStatistics: false,
     hideModeSwitch: false,
     theme: colorSchemeMedia.matches ? 'dark' : 'light',
     frontMatter: true,
     autofocus: false,
+    initialValue: note.body,
     hooks: {
       addImageBlobHook: async (/** @type {Blob | File} */ blob, /** @type {(url: string, text?: string) => void} */ callback) => {
-        if (!currentId) return;
-        const imageUrl = await uploadImageToBlobs(blob, currentId);
+        if (!note.id) return;
+        const imageUrl = await uploadImageToBlobs(blob, note.id);
         callback(imageUrl, 'name' in blob ? blob.name : '');
       },
     },
     events: {
       change: () => {
-        if (!editor || isApplyingMarkdown || options.viewer) return;
-        currentMarkdown = editor.getMarkdown();
-        setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
+        if (!editor) return;
+        note.body = editor.getMarkdown();
       },
       blur: () => {
-        if (!options.viewer && saveAndCommitHandler) {
-          saveAndCommitHandler(currentId);
+        if (saveAndCommitHandler) {
+          saveAndCommitHandler(note);
         }
       },
     },
   });
-  isApplyingMarkdown = true;
-  editor.setMarkdown(markdown);
-  if (!options.preserveCurrentMarkdown) {
-    currentMarkdown = markdown;
+}
+
+/**
+ * @param {string} markdown
+ */
+function createViewer(markdown) {
+  if (editor) {
+    editor.destroy();
   }
-  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
-  isApplyingMarkdown = false;
+  editor = Editor.factory({
+    el: editorHostEl,
+    height: '100%',
+    initialEditType: 'wysiwyg',
+    previewStyle: 'tab',
+    viewer: true,
+    previewHighlight: false,
+    usageStatistics: false,
+    hideModeSwitch: false,
+    theme: colorSchemeMedia.matches ? 'dark' : 'light',
+    frontMatter: true,
+    autofocus: false,
+    initialValue: markdown,
+  });
 }
 
 /**
  * @param {import('./app.js').Note} note
- * @param {{viewer?: boolean; source?: 'user' | 'history' | 'system'; }} [options]
  */
-export async function openNote(note, { viewer, source,  } = {}) {
-  currentMarkdown = note.body;
-  historyMarkdown = '';
-  lastSavedMarkdown = note.body;
-  createEditor(note.id, note.body, { viewer });
-  setEditorReadOnly(viewer ?? false);
+export async function openNote(note, options = {}) {
+  createEditor(note);
   updateCurrentNoteState(note.id != null);
   setActiveNoteInList(note.id);
   historySelectEl.value = '';
   showEditorOnMobile();
-  if (renderCurrentNoteHistoryHandler) {
-    await renderCurrentNoteHistoryHandler(note);
+  if (noteOpenedHandler) {
+    await noteOpenedHandler(note);
   }
-  // if (source !== 'history' && updateHistoryForNoteHandler) {
-  //   const shouldReplace = shouldReplaceHistoryStateHandler
-  //     ? shouldReplaceHistoryStateHandler(source)
-  //     : source === 'system';
-  //   updateHistoryForNoteHandler(note.id, { replace: shouldReplace });
-  // }
-}
-
-export function clearEditorMarkdown() {
-  currentMarkdown = '';
-  if (editor) {
-    editor.setMarkdown('');
-  }
-}
-
-export function getCurrentEditorMarkdown() {
-  return currentMarkdown;
 }
 
 /**
@@ -127,23 +113,14 @@ export function getCurrentEditorMarkdown() {
  * @returns {Promise<void>}
  */
 export async function showHistoryInEditor(body) {
-  historyMarkdown = body;
-  setEditorReadOnly(true);
-  if (editor) {
-    isApplyingMarkdown = true;
-    editor.setMarkdown(body);
-    isApplyingMarkdown = false;
-  }
+  createViewer(body);
 }
 
-export function showCurrentInEditor() {
-  if (!editor) return;
-  historyMarkdown = '';
-  setEditorReadOnly(false);
-  isApplyingMarkdown = true;
-  editor.setMarkdown(currentMarkdown);
-  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
-  isApplyingMarkdown = false;
+/**
+ * @param {import("./app.js").Note} note
+ */
+export function showCurrentInEditor(note) {
+  createEditor(note);
 }
 
 
