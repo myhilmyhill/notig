@@ -18,7 +18,6 @@ import {
   remove,
   status,
   statusMatrix,
-  formatStatusMatrix,
   isUpToDateWithRemote,
   logFileChanges,
   getHistoryContent,
@@ -59,7 +58,7 @@ import {
   renderNoteHistory,
 } from './ui.js';
 import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
-import { openNote, registerNoteOpenedHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-detail.js';
+import { openNote, registerNoteOpenedHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-editor.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -646,7 +645,8 @@ async function saveAndCommit(note) {
   }
   setStatusUi(modified ? 'committed locally' : 'no changes');
 
-  await refreshNotesList(notes);
+  loadAndRenderHistory(note);
+  refreshNotesList(notes);
   return modified;
 }
 
