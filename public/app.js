@@ -31,9 +31,11 @@ import {
   parseNoteBody,
   formatUpdatedAt,
   getLatestCommitTimestamp,
-  getNoteTags,
   getNoteUpdatedAt,
 } from './note-utils.js';
+import {
+  setCurrentTagFilter,
+} from './tags.js';
 import {
   editorHostEl,
   pushBtn,
@@ -60,11 +62,9 @@ import {
   setActiveNoteInList,
   setEditorReadOnly,
   setHasLocalCommits as setHasLocalCommitsUi,
-  listEl,
-  renderNotes,
-  renderTagFilterOptions,
   renderNoteHistory,
 } from './ui.js';
+import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -95,15 +95,10 @@ let isApplyingMarkdown = false;
 let isViewingHistorySnapshot = false;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
-let currentTagFilter = '';
 let historyMarkdown = '';
 const historyCacheById = new Map();
 const historyLoadStateById = new Map();
-const NOTES_PAGE_SIZE = 50;
-const NOTES_SCROLL_THRESHOLD_PX = 120;
 const NOTES_LOAD_BATCH_SIZE = 40;
-let visibleNotesCount = 0;
-let hasPendingNotesScroll = false;
 let hasHandledShareTarget = false;
 
 /**
@@ -124,98 +119,9 @@ function updateCurrentNoteState() {
 }
 
 /**
- * @param {Note} note
- * @returns {string[]}
- */
-function getTagsForNote(note) {
-  const parsed = parseNoteBody(note.body);
-  return getNoteTags(parsed);
-}
-
-/**
- * @param {Note[]} sourceNotes
- * @returns {string[]}
- */
-function collectTagsFromNotes(sourceNotes) {
-  const tags = new Set();
-  sourceNotes.forEach((note) => {
-    getTagsForNote(note).forEach((tag) => {
-      tags.add(tag);
-    });
-  });
-  return Array.from(tags).sort((a, b) => a.localeCompare(b));
-}
-
-function updateTagFilterOptions() {
-  const tags = collectTagsFromNotes(notes);
-  if (currentTagFilter && !tags.includes(currentTagFilter)) {
-    currentTagFilter = '';
-  }
-  renderTagFilterOptions(tags, currentTagFilter);
-}
-
-/**
- * @returns {Note[]}
- */
-function getFilteredNotes() {
-  if (!currentTagFilter) return notes;
-  return notes.filter((note) => getTagsForNote(note).includes(currentTagFilter));
-}
-
-/**
- * @param {number} total
- */
-function clampVisibleNotesCount(total) {
-  if (!visibleNotesCount) {
-    visibleNotesCount = Math.min(total, NOTES_PAGE_SIZE);
-    return;
-  }
-  visibleNotesCount = Math.min(visibleNotesCount, total);
-}
-
-function getNotesScrollContainer() {
-  return listEl.closest('#sidebar') ?? listEl;
-}
-
-/**
- * 
- * @param {{preserveScroll?: boolean; resetVisibleCount?: boolean; scrollToTop?: boolean; skipAutoLoad?: boolean;}} options 
- */
-function renderNotesList(options = {}) {
-  const {
-    preserveScroll = false,
-    resetVisibleCount = false,
-    scrollToTop = false,
-    skipAutoLoad = false,
-  } = options;
-  updateTagFilterOptions();
-  const filteredNotes = getFilteredNotes();
-  if (resetVisibleCount) {
-    visibleNotesCount = Math.min(filteredNotes.length, NOTES_PAGE_SIZE);
-  } else {
-    clampVisibleNotesCount(filteredNotes.length);
-  }
-  const scrollContainer = getNotesScrollContainer();
-  const prevScrollTop = preserveScroll ? scrollContainer.scrollTop : 0;
-  renderNotes(
-    filteredNotes.slice(0, visibleNotesCount),
-    currentId,
-    (note) => openNote(note, { source: 'user' })
-  );
-  if (preserveScroll) {
-    scrollContainer.scrollTop = prevScrollTop;
-  } else if (scrollToTop) {
-    scrollContainer.scrollTop = 0;
-  }
-  if (!skipAutoLoad) {
-    maybeLoadMoreNotes();
-  }
-}
-
-/**
  * @param {{source?: string}} options 
  */
-function showListOnMobile(options = {}) {
+export function showListOnMobile(options = {}) {
   if (!isMobileLayout()) return;
   showListOnMobileUi();
   const source = options.source ?? 'system';
@@ -227,28 +133,6 @@ function showListOnMobile(options = {}) {
   replaceHistoryState({ view: 'list' });
 }
 
-function maybeLoadMoreNotes() {
-  const filteredNotes = getFilteredNotes();
-  if (visibleNotesCount >= filteredNotes.length) return;
-  const scrollContainer = getNotesScrollContainer();
-  const remaining =
-    scrollContainer.scrollHeight -
-    scrollContainer.scrollTop -
-    scrollContainer.clientHeight;
-  if (remaining > NOTES_SCROLL_THRESHOLD_PX) return;
-  visibleNotesCount = Math.min(filteredNotes.length, visibleNotesCount + NOTES_PAGE_SIZE);
-  renderNotesList({ preserveScroll: true, skipAutoLoad: true });
-}
-
-function handleNotesScroll() {
-  if (hasPendingNotesScroll) return;
-  hasPendingNotesScroll = true;
-  requestAnimationFrame(() => {
-    hasPendingNotesScroll = false;
-    maybeLoadMoreNotes();
-  });
-}
-
 /**
  * @param {Pick<Note, 'id'> & Partial<Note>} note
  */
@@ -257,7 +141,7 @@ function getNoteFilePath(note) {
 }
 
 /**
- * @param {Note[]} sourceNotes
+ * @param {import('./app').Note[]} sourceNotes
  * @returns {Promise<void>}
  */
 async function buildNoteMarkers(sourceNotes) {
@@ -358,9 +242,12 @@ async function getChangedNotePaths(localOid, remoteOid) {
   return changed;
 }
 
-async function refreshNotesList() {
+/**
+ * @param {import("./app").Note[]} notes
+ */
+export async function refreshNotesList(notes) {
   await buildNoteMarkers(notes);
-  renderNotesList();
+  renderNotesList(notes, currentId, openNote);
 }
 
 function randomId() {
@@ -815,7 +702,7 @@ async function createNote() {
   notes.unshift(note);
   await saveNoteFile(note);
   currentId = id;
-  await refreshNotesList();
+  await refreshNotesList(notes);
   openNote(note, { source: 'user' });
 }
 
@@ -923,7 +810,7 @@ async function createSharedNote(payload) {
   notes.unshift(note);
   await saveNoteFile(note);
   currentId = id;
-  await refreshNotesList();
+  await refreshNotesList(notes);
   await openNote(note, { source: 'user' });
 }
 
@@ -990,7 +877,7 @@ async function deleteCurrentNote() {
     notes.splice(targetIndex, 1);
   }
   currentId = notes[0]?.id ?? null;
-  await refreshNotesList();
+  await refreshNotesList(notes);
   if (notes[0]) {
     await openNote(notes[0], { source: 'system' });
   } else {
@@ -1046,7 +933,7 @@ async function saveAndCommit() {
   }
   setStatusUi(modified ? 'committed locally' : 'no changes');
 
-  await refreshNotesList();
+  await refreshNotesList(notes);
   lastSavedMarkdown = currentMarkdown;
   setHasUnsavedChanges(false);
   return modified;
@@ -1069,14 +956,14 @@ async function pushChanges() {
     await merge({ abortOnConflict: false });
     await refreshWorkingTree();
     await loadNotes();
-    await refreshNotesList();
+    await refreshNotesList(notes);
   } catch (err) {
     if (
       err instanceof git.Errors.MergeConflictError ||
       err instanceof git.Errors.UnmergedPathsError
     ) {
       await loadNotes();
-      await refreshNotesList();
+      await refreshNotesList(notes);
       if (currentId) {
         const note = notes.find((entry) => entry.id === currentId);
         if (note) {
@@ -1112,7 +999,7 @@ async function pushChanges() {
     }
     console.log('[push] refs:after', { postLocalOid, postRemoteOid });
     setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
-    await refreshNotesList();
+    await refreshNotesList(notes);
   } catch (err) {
     if (err instanceof git.Errors.PushRejectedError) {
       const upToDate = await isUpToDateWithRemote();
@@ -1134,7 +1021,7 @@ async function pullChanges() {
       await refreshWorkingTree();
     }
     await loadNotes();
-    await refreshNotesList();
+    await refreshNotesList(notes);
     const [localOid, remoteOid] = await Promise.all([
       git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
@@ -1163,7 +1050,7 @@ async function pullChanges() {
       if (!hasUnsavedChanges) {
         await resetToRemote();
         await loadNotes();
-        await refreshNotesList();
+        await refreshNotesList(notes);
         setStatusUi('pulled (remote)');
         return;
       }
@@ -1206,7 +1093,7 @@ async function resetNotesToOrigin() {
     setHistoryUiDisabled(true);
     showListOnMobile();
   }
-  await refreshNotesList();
+  await refreshNotesList(notes);
   setHasUnsavedChanges(false);
   setStatusUi('reset to origin');
 }
@@ -1243,10 +1130,10 @@ async function bootstrap() {
     await refreshWorkingTree();
     await loadNotes({
       onBatch: () => {
-        renderNotesList({ preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentId, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
-    await refreshNotesList();
+    await refreshNotesList(notes);
     didLoadNotes = true;
     const committed = await commitMergeConflictMarkers();
     setStatusUi(committed ? 'merge conflict committed' : 'synced');
@@ -1260,10 +1147,10 @@ async function bootstrap() {
   if (!didLoadNotes) {
     await loadNotes({
       onBatch: () => {
-        renderNotesList({ preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentId, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
-    await refreshNotesList();
+    await refreshNotesList(notes);
   }
   updateCurrentNoteState();
   renderCurrentNoteHistory();
@@ -1305,8 +1192,8 @@ newBtn.addEventListener('click', () => {
 });
 
 tagFilterEl.addEventListener('change', () => {
-  currentTagFilter = tagFilterEl.value;
-  renderNotesList({ resetVisibleCount: true, scrollToTop: true });
+  setCurrentTagFilter(tagFilterEl.value);
+  renderNotesList(notes, currentId, openNote, { resetVisibleCount: true, scrollToTop: true });
 });
 
 deleteBtn.addEventListener('click', () => {
@@ -1327,7 +1214,7 @@ historySelectEl.addEventListener('pointerdown', requestHistoryLoad);
 applyMobileUiState();
 
 const notesScrollContainer = getNotesScrollContainer();
-notesScrollContainer.addEventListener('scroll', handleNotesScroll);
+notesScrollContainer.addEventListener('scroll', () => handleNotesScroll(notes, currentId, openNote));
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {

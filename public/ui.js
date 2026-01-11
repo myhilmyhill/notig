@@ -35,8 +35,8 @@ export const pushBtn = getRequiredElement('push-notes');
 export const pullBtn = getRequiredElement('pull-notes');
 /** @type {HTMLButtonElement} */
 export const resetBtn = getRequiredElement('reset-notes');
-/** @type {HTMLButtonElement} */
-export const cloneBtn = getRequiredElement('clone');
+/** @type {HTMLButtonElement | null} */
+export const cloneBtn = document.getElementById('clone');
 /** @type {HTMLButtonElement} */
 export const emptyCloneBtn = getRequiredElement('empty-clone');
 /** @type {HTMLButtonElement} */
