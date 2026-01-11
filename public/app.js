@@ -1,6 +1,5 @@
 /// <reference lib="dom" />
 'use strict';
-import { Editor } from 'https://esm.sh/@toast-ui/editor@3.2.2';
 import {
   git,
   fs,
@@ -37,7 +36,6 @@ import {
   setCurrentTagFilter,
 } from './tags.js';
 import {
-  editorHostEl,
   pushBtn,
   pullBtn,
   resetBtn,
@@ -49,7 +47,7 @@ import {
   historySelectEl,
   mobileMedia,
   coarsePointerMedia,
-  colorSchemeMedia,
+  // colorSchemeMedia,
   mobileBackBtn,
   setStatus as setStatusUi,
   setHasUnsavedChanges as setHasUnsavedChangesUi,
@@ -57,14 +55,13 @@ import {
   isMobileLayout,
   applyMobileState,
   updateCurrentNoteState as updateCurrentNoteUiState,
-  showEditorOnMobile,
   showListOnMobile as showListOnMobileUi,
-  setActiveNoteInList,
   setEditorReadOnly,
   setHasLocalCommits as setHasLocalCommitsUi,
   renderNoteHistory,
 } from './ui.js';
 import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
+import { clearEditorMarkdown, getCurrentEditorMarkdown, openNote, registerRenderCurrentNoteHistoryHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-detail.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -84,38 +81,19 @@ if ('serviceWorker' in navigator) {
 
 /** @type {Note[]} */
 let notes = [];
-/** @type {Note['id'] | null} */
-let currentId = null;
-/** @type {Editor | null} */
-let editor = null;
-let currentMarkdown = '';
-let lastSavedMarkdown = '';
-let hasUnsavedChanges = false;
-let isApplyingMarkdown = false;
-let isViewingHistorySnapshot = false;
+/** @type {Note | null} */
+let currentNote = null;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
-let historyMarkdown = '';
-const historyCacheById = new Map();
-const historyLoadStateById = new Map();
 const NOTES_LOAD_BATCH_SIZE = 40;
 let hasHandledShareTarget = false;
 
-/**
- * @param {boolean} next
- */
-function setHasUnsavedChanges(next) {
-  if (hasUnsavedChanges === next) return;
-  hasUnsavedChanges = next;
-  setHasUnsavedChangesUi(hasUnsavedChanges);
-}
-
 function applyMobileUiState() {
-  applyMobileState(Boolean(currentId));
+  applyMobileState(currentNote != null);
 }
 
 function updateCurrentNoteState() {
-  updateCurrentNoteUiState(Boolean(currentId));
+  updateCurrentNoteUiState(currentNote != null);
 }
 
 /**
@@ -151,18 +129,11 @@ async function buildNoteMarkers(sourceNotes) {
   ]);
   const hasLocalCommits = await hasLocalCommitsToPush(localOid, remoteOid);
   setHasLocalCommitsUi(hasLocalCommits);
-  console.log('[markers] refs', { localOid, remoteOid });
   const changedPaths = await getChangedNotePaths(localOid, remoteOid);
-  console.log('[markers] changed paths', Array.from(changedPaths));
 
   for (const note of sourceNotes) {
     const filepath = getNoteFilePath(note);
     const edited = changedPaths.has(filepath);
-    console.log('[markers] note', {
-      id: note.id,
-      filepath,
-      edited,
-    });
     note.edited = edited;
   }
 }
@@ -247,7 +218,7 @@ async function getChangedNotePaths(localOid, remoteOid) {
  */
 export async function refreshNotesList(notes) {
   await buildNoteMarkers(notes);
-  renderNotesList(notes, currentId, openNote);
+  renderNotesList(notes, currentNote?.id ?? null, openNote);
 }
 
 function randomId() {
@@ -262,124 +233,6 @@ function getNoteIdFromPath(filePath) {
   return filePath.startsWith(`${notesDir}/`)
     ? filePath.slice(notesDir.length + 1)
     : filePath;
-}
-
-/**
- * @param {string} markdown
- * @param {{viewer?: boolean; preserveCurrentMarkdown?: boolean}} [options]
- */
-function createEditor(markdown, options = {}) {
-  if (editor) {
-    editor.destroy();
-  }
-  editor = new Editor({
-    el: editorHostEl,
-    height: '100%',
-    initialEditType: 'wysiwyg',
-    previewStyle: 'tab',
-    viewer: Boolean(options.viewer),
-    previewHighlight: false,
-    usageStatistics: false,
-    hideModeSwitch: false,
-    theme: colorSchemeMedia.matches ? 'dark' : 'light',
-    frontMatter: true,
-    autofocus: false,
-    hooks: {
-      addImageBlobHook: async (/** @type {Blob | File} */ blob, /** @type {(url: string, text?: string) => void} */ callback) => {
-        if (!currentId) return;
-        const imageUrl = await uploadImageToBlobs(blob, currentId);
-        callback(imageUrl, 'name' in blob ? blob.name : '');
-      },
-    },
-    events: {
-      change: () => {
-        if (!editor || isApplyingMarkdown || isViewingHistorySnapshot) return;
-        currentMarkdown = editor.getMarkdown();
-        setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
-      },
-      blur: () => {
-        if (isViewingHistorySnapshot || !hasUnsavedChanges) return;
-        saveAndCommit();
-      },
-    },
-  });
-  isApplyingMarkdown = true;
-  editor.setMarkdown(markdown);
-  if (!options.preserveCurrentMarkdown) {
-    currentMarkdown = markdown;
-  }
-  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
-  isApplyingMarkdown = false;
-}
-
-/**
- * @param {Blob} blob
- * @param {string} noteId
- * @returns {Promise<string>}
- */
-async function uploadImageToBlobs(blob, noteId) {
-  const filename = getBlobFileName(blob);
-  const url = `/blobs/${encodeURIComponent(noteId)}/${encodeURIComponent(filename)}`;
-  const response = await globalThis.fetch(url, {
-    method: 'POST',
-    body: blob,
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => '');
-    const status = typeof response.status === 'number' ? response.status : 'unknown';
-    const statusText = response.statusText ? ` ${response.statusText}` : '';
-    const detail = errorBody ? ` ${errorBody}` : '';
-    throw new Error(`upload failed: ${status}${statusText}${detail}`);
-  }
-
-  return getUploadUrlFromResponse(response);
-}
-
-/**
- * @param {Response} response
- * @returns {Promise<string>}
- */
-async function getUploadUrlFromResponse(response) {
-  const contentType = response.headers.get('Content-Type') || '';
-
-  if (contentType.includes('application/json')) {
-    const payload = await response.clone().json();
-    if (payload && typeof payload.url === 'string' && payload.url.trim()) {
-      return payload.url.trim();
-    }
-  }
-
-  const bodyText = await response.text().catch(() => '');
-  const trimmedBody = bodyText.trim();
-  if (trimmedBody) {
-    return trimmedBody;
-  }
-
-  const locationHeader = response.headers.get('Location');
-  if (locationHeader && locationHeader.trim()) {
-    return locationHeader.trim();
-  }
-
-  throw new Error('upload failed: invalid response');
-}
-
-/**
- * @param {Blob} blob
- * @returns {string}
- */
-function getBlobFileName(blob) {
-  if ('name' in blob && typeof blob.name === 'string' && blob.name) {
-    return blob.name;
-  }
-  let ext = 'bin';
-  if (blob.type && blob.type.startsWith('image/')) {
-    const [, subtype] = blob.type.split('/');
-    if (subtype) {
-      ext = subtype;
-    }
-  }
-  return `image-${Date.now()}.${ext}`;
 }
 
 async function cloneRepo() {
@@ -425,7 +278,6 @@ async function listNoteFiles(rootDir) {
 async function loadNotes(options = {}) {
   const { onBatch } = options;
   const useCommitTimestamp = true;
-  clearHistoryCache();
   const files = await listNoteFiles(notesDir);
 
   /** @type {Note[]} */
@@ -488,36 +340,12 @@ async function loadNotes(options = {}) {
   notes = loadedNotes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 }
 
-function clearHistoryCache() {
-  historyCacheById.clear();
-  historyLoadStateById.clear();
-}
-
-/**
- * @param {boolean} isDisabled
- */
-function setHistoryUiDisabled(isDisabled) {
-  historySelectEl.disabled = isDisabled;
-}
-
 /**
  * @param {string} noteId
  * @returns {Promise<void>}
  */
 async function loadAndRenderHistory(noteId) {
-  if (historyCacheById.has(noteId)) {
-    if (currentId === noteId) {
-      const cached = historyCacheById.get(noteId);
-      renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
-    }
-    return;
-  }
-  if (historyLoadStateById.get(noteId)) return;
-
-  historyLoadStateById.set(noteId, true);
-  if (currentId === noteId) {
-    renderNoteHistory([], { emptyMessage: '履歴を読み込んでいます' });
-  }
+  renderNoteHistory([], { emptyMessage: '履歴を読み込んでいます' });
 
   try {
     const filepath = getNoteFilePath({ id: noteId });
@@ -526,10 +354,7 @@ async function loadAndRenderHistory(noteId) {
       (entry) => typeof entry.commit?.author?.timestamp === 'number'
     );
     if (!validCommits.length) {
-      historyCacheById.set(noteId, {
-        entries: [],
-        emptyMessage: '履歴がありません',
-      });
+      renderNoteHistory([], { emptyMessage: '履歴がありません' });
       return;
     }
 
@@ -540,24 +365,11 @@ async function loadAndRenderHistory(noteId) {
         label: typeof ts === 'number' ? formatUpdatedAt(ts * 1000) : entry.oid,
       };
     });
-    historyCacheById.set(noteId, {
-      entries,
-      emptyMessage: '履歴がありません',
-    });
+    renderNoteHistory(entries, { emptyMessage: '履歴がありません' });
+    return;
   } catch (err) {
-    historyCacheById.set(noteId, {
-      entries: [],
-      emptyMessage: '履歴を取得できません',
-    });
+    renderNoteHistory([], { emptyMessage: '履歴を取得できません' });
     throw err;
-  } finally {
-    historyLoadStateById.delete(noteId);
-    if (currentId === noteId) {
-      const cached = historyCacheById.get(noteId);
-      if (cached) {
-        renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
-      }
-    }
   }
 }
 
@@ -606,90 +418,22 @@ function updateHistoryForNote(noteId, options = {}) {
   hasInitializedHistoryState = true;
 }
 
-/**
- * @param {string} oid
- * @returns {Promise<void>}
- */
-async function showHistoryInEditor(oid) {
-  if (!currentId) return;
-  const filepath = getNoteFilePath({ id: currentId });
-  const body = await getHistoryContent(oid, filepath);
-  historyMarkdown = body;
-  isViewingHistorySnapshot = true;
-  setEditorReadOnly(true);
-  if (editor) {
-    isApplyingMarkdown = true;
-    editor.setMarkdown(body);
-    isApplyingMarkdown = false;
-  }
-}
-
-function showCurrentInEditor() {
-  if (!currentId || !editor) return;
-  isViewingHistorySnapshot = false;
-  historyMarkdown = '';
-  setEditorReadOnly(false);
-  isApplyingMarkdown = true;
-  editor.setMarkdown(currentMarkdown);
-  setHasUnsavedChanges(currentMarkdown !== lastSavedMarkdown);
-  isApplyingMarkdown = false;
-}
-
-/**
- * @param {{eager?: boolean}} options 
- */
-async function renderCurrentNoteHistory(options = {}) {
-  if (!currentId) {
-    renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
-    historySelectEl.value = '';
-    setHistoryUiDisabled(true);
-    return;
-  }
-  setHistoryUiDisabled(false);
-
-  const cached = historyCacheById.get(currentId);
-  if (cached) {
-    renderNoteHistory(cached.entries, { emptyMessage: cached.emptyMessage });
-    return;
-  }
-
-  if (options.eager) {
-    await loadAndRenderHistory(currentId);
-    return;
-  }
-
-  renderNoteHistory([], { emptyMessage: '履歴を読み込むにはクリック' });
-  historySelectEl.value = '';
-}
-
-function requestHistoryLoad() {
-  if (!currentId) return;
-  if (historyCacheById.has(currentId)) return;
-  if (historyLoadStateById.get(currentId)) return;
-  loadAndRenderHistory(currentId);
-}
-
+// /**
+//  * @param {{eager?: boolean}} options 
+//  */
 /**
  * @param {Note} note
- * @param {{source?: 'user' | 'history' | 'system'}} [options]
  */
-async function openNote(note, options = {}) {
-  currentId = note.id;
-  currentMarkdown = note.body;
-  isViewingHistorySnapshot = false;
-  historyMarkdown = '';
-  lastSavedMarkdown = note.body;
-  createEditor(note.body, { viewer: false });
-  setEditorReadOnly(false);
-  updateCurrentNoteState();
-  setActiveNoteInList(currentId);
-  renderCurrentNoteHistory();
+async function renderCurrentNoteHistory(note) {
+  currentNote = note;
   historySelectEl.value = '';
-  showEditorOnMobile();
-  if (options.source !== 'history') {
-    const shouldReplace = options.source === 'system' || !hasInitializedHistoryState;
-    updateHistoryForNote(note.id, { replace: shouldReplace });
+
+  if (!note.updatedAt) {
+    renderNoteHistory([], { emptyMessage: '履歴がありません' });
+    return;
   }
+
+  await loadAndRenderHistory(note.id);
 }
 
 async function createNote() {
@@ -698,11 +442,9 @@ async function createNote() {
   const note = {
     id, body: '---\ntitle: \n---\n\n'
   };
-  lastSavedMarkdown = note.body;
   notes.unshift(note);
   await saveNoteFile(note);
-  currentId = id;
-  await refreshNotesList(notes);
+  refreshNotesList(notes);
   openNote(note, { source: 'user' });
 }
 
@@ -806,10 +548,8 @@ async function createSharedNote(payload) {
     id,
     body: buildSharedNoteBody(payload),
   };
-  lastSavedMarkdown = note.body;
   notes.unshift(note);
   await saveNoteFile(note);
-  currentId = id;
   await refreshNotesList(notes);
   await openNote(note, { source: 'user' });
 }
@@ -847,9 +587,9 @@ async function handleShareTarget() {
 }
 
 async function deleteCurrentNote() {
-  if (!currentId) return;
-  const targetIndex = notes.findIndex((note) => note.id === currentId);
-  const filepath = getNoteFilePath({ id: currentId });
+  if (!currentNote) return;
+  const targetIndex = notes.findIndex((note) => note === currentNote);
+  const filepath = getNoteFilePath(currentNote);
   const prevStatus = await status({ filepath });
 
   try {
@@ -876,32 +616,25 @@ async function deleteCurrentNote() {
   if (targetIndex !== -1) {
     notes.splice(targetIndex, 1);
   }
-  currentId = notes[0]?.id ?? null;
+  currentNote = null;
   await refreshNotesList(notes);
-  if (notes[0]) {
-    await openNote(notes[0], { source: 'system' });
-  } else {
-    currentMarkdown = '';
-    if (editor) {
-      editor.setMarkdown('');
-    }
-    updateCurrentNoteState();
-    renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
-    historySelectEl.value = '';
-    setHistoryUiDisabled(true);
-    showListOnMobile();
-  }
+  clearEditorMarkdown();
+  updateCurrentNoteState();
+  renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+  historySelectEl.value = '';
+  showListOnMobile();
 }
 
 /**
  * @returns {Promise<boolean>}
+ * @param {string} [currentId]
  */
-async function saveAndCommit() {
+async function saveAndCommit(currentId) {
   if (!currentId) return false;
   /** @type {Note} */
   const note = {
     id: currentId,
-    body: currentMarkdown,
+    body: getCurrentEditorMarkdown(),
   };
   const parsed = parseNoteBody(note.body);
   const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
@@ -934,13 +667,11 @@ async function saveAndCommit() {
   setStatusUi(modified ? 'committed locally' : 'no changes');
 
   await refreshNotesList(notes);
-  lastSavedMarkdown = currentMarkdown;
-  setHasUnsavedChanges(false);
   return modified;
 }
 
 async function pushChanges() {
-  if (hasUnsavedChanges && currentId && !isViewingHistorySnapshot) {
+  if (currentNote) {
     await saveAndCommit();
   }
   const [preLocalOid, preRemoteOid] = await Promise.all([
@@ -964,11 +695,8 @@ async function pushChanges() {
     ) {
       await loadNotes();
       await refreshNotesList(notes);
-      if (currentId) {
-        const note = notes.find((entry) => entry.id === currentId);
-        if (note) {
-          await openNote(note, { source: 'system' });
-        }
+      if (currentNote) {
+        await openNote(currentNote, { source: 'system' });
       }
 
       conflictCommitted = await commitMergeConflictMarkers();
@@ -997,7 +725,6 @@ async function pushChanges() {
         force: true,
       });
     }
-    console.log('[push] refs:after', { postLocalOid, postRemoteOid });
     setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
     await refreshNotesList(notes);
   } catch (err) {
@@ -1017,27 +744,17 @@ async function pullChanges() {
   try {
     await fetch();
     await merge({ abortOnConflict: false });
-    if (!hasUnsavedChanges) {
+    // if (!hasUnsavedChanges) {
       await refreshWorkingTree();
-    }
+    // }
     await loadNotes();
     await refreshNotesList(notes);
     const [localOid, remoteOid] = await Promise.all([
       git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
       git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
     ]);
-    console.log('[pull] refs', { localOid, remoteOid });
-    console.log('[pull] notes', {
-      count: notes.length,
-      first: notes[0]?.id ?? null,
-      firstUpdatedAt: notes[0]?.updatedAt ?? null,
-      currentId,
-    });
-    if (!hasUnsavedChanges && currentId) {
-      const note = notes.find((entry) => entry.id === currentId);
-      if (note) {
-        await openNote(note, { source: 'system' });
-      }
+    if (currentNote) {
+      await openNote(currentNote, { source: 'system' });
     }
     const committed = await commitMergeConflictMarkers();
     if (committed) {
@@ -1047,13 +764,13 @@ async function pullChanges() {
     setStatusUi('pulled');
   } catch (err) {
     if (err instanceof git.Errors.MergeConflictError) {
-      if (!hasUnsavedChanges) {
+      // if (!hasUnsavedChanges) {
         await resetToRemote();
         await loadNotes();
         await refreshNotesList(notes);
         setStatusUi('pulled (remote)');
         return;
-      }
+      // }
       
       const committed = await commitMergeConflictMarkers();
       setStatusUi(committed ? 'merge conflict committed' : 'merge conflict (markers created)');
@@ -1073,28 +790,13 @@ async function resetNotesToOrigin() {
   await refreshWorkingTree();
   await removeLocalOnlyNotes();
   await loadNotes();
-  currentId = notes[0]?.id ?? null;
-  isViewingHistorySnapshot = false;
-  historyMarkdown = '';
-  if (currentId) {
-    const note = notes.find((entry) => entry.id === currentId);
-    if (note) {
-      await openNote(note, { source: 'system' });
-    }
-  } else {
-    currentMarkdown = '';
-    lastSavedMarkdown = '';
-    if (editor) {
-      editor.setMarkdown('');
-    }
-    updateCurrentNoteState();
-    renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
-    historySelectEl.value = '';
-    setHistoryUiDisabled(true);
-    showListOnMobile();
-  }
+  currentNote = null;
+  clearEditorMarkdown();
+  updateCurrentNoteState();
+  renderNoteHistory([], { emptyMessage: 'メモが選択されていません' });
+  historySelectEl.value = '';
+  showListOnMobile();
   await refreshNotesList(notes);
-  setHasUnsavedChanges(false);
   setStatusUi('reset to origin');
 }
 
@@ -1130,7 +832,7 @@ async function bootstrap() {
     await refreshWorkingTree();
     await loadNotes({
       onBatch: () => {
-        renderNotesList(notes, currentId, openNote, { preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentNote?.id ?? null, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
     await refreshNotesList(notes);
@@ -1147,16 +849,15 @@ async function bootstrap() {
   if (!didLoadNotes) {
     await loadNotes({
       onBatch: () => {
-        renderNotesList(notes, currentId, openNote, { preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentNote?.id ?? null, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
     await refreshNotesList(notes);
   }
   updateCurrentNoteState();
-  renderCurrentNoteHistory();
   if (!hasInitializedHistoryState) {
-    if (currentId) {
-      updateHistoryForNote(currentId, { replace: true });
+    if (currentNote) {
+      updateHistoryForNote(currentNote.id, { replace: true });
     } else {
       replaceHistoryState({ view: 'list' });
       hasInitializedHistoryState = true;
@@ -1193,28 +894,28 @@ newBtn.addEventListener('click', () => {
 
 tagFilterEl.addEventListener('change', () => {
   setCurrentTagFilter(tagFilterEl.value);
-  renderNotesList(notes, currentId, openNote, { resetVisibleCount: true, scrollToTop: true });
+  renderNotesList(notes, currentNote?.id ?? null, openNote, { resetVisibleCount: true, scrollToTop: true });
 });
 
 deleteBtn.addEventListener('click', () => {
   deleteCurrentNote();
 });
 
-historySelectEl.addEventListener('change', () => {
-  if (!currentId) return;
+historySelectEl.addEventListener('change', async () => {
+  if (!currentNote) return;
   const oid = historySelectEl.value;
   if (!oid || oid === '__empty') {
     showCurrentInEditor();
     return;
   }
-  showHistoryInEditor(oid);
+  const filepath = getNoteFilePath(currentNote);
+  const body = await getHistoryContent(oid, filepath);
+  showHistoryInEditor(body);
 });
-historySelectEl.addEventListener('focus', requestHistoryLoad);
-historySelectEl.addEventListener('pointerdown', requestHistoryLoad);
 applyMobileUiState();
 
 const notesScrollContainer = getNotesScrollContainer();
-notesScrollContainer.addEventListener('scroll', () => handleNotesScroll(notes, currentId, openNote));
+notesScrollContainer.addEventListener('scroll', () => handleNotesScroll(notes, currentNote?.id ?? null, openNote));
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {
@@ -1222,18 +923,18 @@ if (mobileBackBtn) {
   });
 }
 
-colorSchemeMedia.addEventListener('change', () => {
-  const markdown = isViewingHistorySnapshot
-    ? historyMarkdown
-    : editor
-      ? editor.getMarkdown()
-      : currentMarkdown;
-  createEditor(markdown, {
-    viewer: isViewingHistorySnapshot,
-    preserveCurrentMarkdown: isViewingHistorySnapshot,
-  });
-  setEditorReadOnly(isViewingHistorySnapshot);
-});
+// colorSchemeMedia.addEventListener('change', () => {
+//   const markdown = isViewingHistorySnapshot
+//     ? historyMarkdown
+//     : editor
+//       ? editor.getMarkdown()
+//       : currentMarkdown;
+//   createEditor(markdown, {
+//     viewer: isViewingHistorySnapshot,
+//     preserveCurrentMarkdown: isViewingHistorySnapshot,
+//   });
+//   setEditorReadOnly(isViewingHistorySnapshot);
+// });
 
 mobileMedia.addEventListener('change', applyMobileUiState);
 coarsePointerMedia.addEventListener('change', applyMobileUiState);
@@ -1269,10 +970,10 @@ window.addEventListener('unhandledrejection', (event) => {
   alert(`${String(event.reason.message)}`);
 });
 
+registerSaveAndCommit(saveAndCommit);
+registerRenderCurrentNoteHistoryHandler(renderCurrentNoteHistory);
+
 bootstrap()
-  .catch((err) => {
-    console.error(err);
-  })
   .finally(() => {
     handleShareTarget();
   });

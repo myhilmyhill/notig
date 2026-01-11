@@ -1,11 +1,9 @@
 import { parseNoteBody, getNoteTags } from './note-utils.js';
 
-/** @typedef {{id: Readonly<string>; body: string; updatedAt?: number; edited?: boolean}} Note */
-
 let currentTagFilter = '';
 
 /**
- * @param {Note} note
+ * @param {import('./app.js').Note} note
  * @returns {string[]}
  */
 export function getTagsForNote(note) {
@@ -14,7 +12,7 @@ export function getTagsForNote(note) {
 }
 
 /**
- * @param {Note[]} sourceNotes
+ * @param {import('./app.js').Note[]} sourceNotes
  * @returns {string[]}
  */
 export function collectTagsFromNotes(sourceNotes) {
@@ -28,7 +26,7 @@ export function collectTagsFromNotes(sourceNotes) {
 }
 
 /**
- * @param {Note[]} sourceNotes
+ * @param {import('./app.js').Note[]} sourceNotes
  * @param {(tags: string[], current: string) => void} renderTagFilterOptions
  */
 export function updateTagFilterOptions(sourceNotes, renderTagFilterOptions) {
@@ -40,8 +38,8 @@ export function updateTagFilterOptions(sourceNotes, renderTagFilterOptions) {
 }
 
 /**
- * @param {Note[]} sourceNotes
- * @returns {Note[]}
+ * @param {import('./app.js').Note[]} sourceNotes
+ * @returns {import('./app.js').Note[]}
  */
 export function getFilteredNotes(sourceNotes) {
   if (!currentTagFilter) return sourceNotes;
