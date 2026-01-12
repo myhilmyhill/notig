@@ -52,7 +52,7 @@ function createEditor(note) {
     initialValue: note.body,
     hooks: {
       addImageBlobHook: async (/** @type {Blob | File} */ blob, /** @type {(url: string, text?: string) => void} */ callback) => {
-        if (!note.id) return;
+        if (!note) return;
         const imageUrl = await uploadImageToBlobs(blob, note.id);
         callback(imageUrl, 'name' in blob ? blob.name : '');
       },

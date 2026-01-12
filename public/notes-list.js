@@ -27,10 +27,10 @@ export function getNotesScrollContainer() {
 
 /**
  * @param {import("./app").Note[]} notes
- * @param {string | null} currentId
+ * @param {import("./app").Note | null} currentNote
  * @param {(note: import('./app').Note, options?: { source?: "user" | "history" | "system"; }) => Promise<void>} openNote
  */
-function maybeLoadMoreNotes(notes, currentId, openNote) {
+function maybeLoadMoreNotes(notes, currentNote, openNote) {
   const filteredNotes = getFilteredNotes(notes);
   if (visibleNotesCount >= filteredNotes.length) return;
   const scrollContainer = getNotesScrollContainer();
@@ -40,30 +40,30 @@ function maybeLoadMoreNotes(notes, currentId, openNote) {
     scrollContainer.clientHeight;
   if (remaining > NOTES_SCROLL_THRESHOLD_PX) return;
   visibleNotesCount = Math.min(filteredNotes.length, visibleNotesCount + NOTES_PAGE_SIZE);
-  renderNotesList(filteredNotes, currentId, openNote, { preserveScroll: true, skipAutoLoad: true });
+  renderNotesList(filteredNotes, currentNote, openNote, { preserveScroll: true, skipAutoLoad: true });
 }
 
 /**
  * @param {import("./app").Note[]} notes
- * @param {string | null} currentId
+ * @param {import("./app").Note | null} currentNote
  * @param {(note: import('./app').Note, options?: { source?: "user" | "history" | "system"; }) => Promise<void>} openNote
  */
-export function handleNotesScroll(notes, currentId, openNote) {
+export function handleNotesScroll(notes, currentNote, openNote) {
   if (hasPendingNotesScroll) return;
   hasPendingNotesScroll = true;
   requestAnimationFrame(() => {
     hasPendingNotesScroll = false;
-    maybeLoadMoreNotes(notes, currentId, openNote);
+    maybeLoadMoreNotes(notes, currentNote, openNote);
   });
 }
 
 /**
  * @param {import("./app").Note[]} notes
  * @param {{preserveScroll?: boolean;resetVisibleCount?: boolean;scrollToTop?: boolean;skipAutoLoad?: boolean;}} options
- * @param {string | null} currentId
+ * @param {import("./app").Note | null} currentNote
  * @param {(note: import('./app').Note, options?: { source?: "user" | "history" | "system"; }) => Promise<void>} openNote
  */
-export function renderNotesList(notes, currentId, openNote, options = {}) {
+export function renderNotesList(notes, currentNote, openNote, options = {}) {
   const {
     preserveScroll = false,
     resetVisibleCount = false,
@@ -81,7 +81,7 @@ export function renderNotesList(notes, currentId, openNote, options = {}) {
   const prevScrollTop = preserveScroll ? scrollContainer.scrollTop : 0;
   renderNotes(
     filteredNotes.slice(0, visibleNotesCount),
-    currentId,
+    currentNote,
     (note) => openNote(note, { source: 'user' })
   );
   if (preserveScroll) {
@@ -90,6 +90,6 @@ export function renderNotesList(notes, currentId, openNote, options = {}) {
     scrollContainer.scrollTop = 0;
   }
   if (!skipAutoLoad) {
-    maybeLoadMoreNotes(notes, currentId, openNote);
+    maybeLoadMoreNotes(notes, currentNote, openNote);
   }
 }

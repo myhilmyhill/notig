@@ -2,11 +2,6 @@
 import LightningFS from 'https://esm.sh/@isomorphic-git/lightning-fs';
 import * as git from 'https://esm.sh/isomorphic-git';
 import http from 'https://esm.sh/isomorphic-git/http/web';
-import { Buffer } from 'https://esm.sh/buffer@6.0.3';
-
-if (!globalThis.Buffer) {
-  globalThis.Buffer = Buffer;
-}
 
 const fs = new LightningFS('notig-fs');
 const pfs = fs.promises;
@@ -38,14 +33,24 @@ export function init(options = {}) {
   return git.init({ ...defaults, ...options });
 }
 
+/** @param {{ filepath?: string; ref?: string; depth?: number }} options */
 export function log(options = {}) {
   const defaults = { fs, dir };
-  return git.log({ ...defaults, ...options });
+  const nextOptions = { ...options };
+  if (nextOptions.filepath) {
+    nextOptions.filepath = toRepoPath(nextOptions.filepath);
+  }
+  return git.log({ ...defaults, ...nextOptions });
 }
 
+/** @param {{ filepath?: string }} options */
 export function add(options = {}) {
   const defaults = { fs, dir };
-  return git.add({ ...defaults, ...options });
+  const nextOptions = { ...options };
+  if (nextOptions.filepath) {
+    nextOptions.filepath = toRepoPath(nextOptions.filepath);
+  }
+  return git.add({ ...defaults, ...nextOptions });
 }
 
 export function commit(options = {}) {
@@ -53,9 +58,14 @@ export function commit(options = {}) {
   return git.commit({ ...defaults, ...options });
 }
 
+/** @param {{ filepath?: string }} options */
 export function remove(options = {}) {
   const defaults = { fs, dir };
-  return git.remove({ ...defaults, ...options });
+  const nextOptions = { ...options };
+  if (nextOptions.filepath) {
+    nextOptions.filepath = toRepoPath(nextOptions.filepath);
+  }
+  return git.remove({ ...defaults, ...nextOptions });
 }
 
 export function push(options = {}) {
@@ -99,15 +109,105 @@ export function merge(options = {}) {
   return git.merge({ ...defaults, ...options });
 }
 
-export function readBlob(options = {}) {
-  const defaults = { fs, dir };
-  return git.readBlob({ ...defaults, ...options });
+/**
+ * @param {string} ref
+ * @returns {Promise<string>}
+ */
+export function resolveRef(ref) {
+  return git.resolveRef({ fs, dir, ref });
 }
 
-/** @param {{ filepath: string }} [options]  */
+/**
+ * @param {string} ref
+ * @param {string} value
+ * @param {boolean} [force]
+ */
+export function writeRef(ref, value, force = false) {
+  return git.writeRef({ fs, dir, ref, value, force });
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isMergeConflictError(err) {
+  return err instanceof git.Errors.MergeConflictError;
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isUnmergedPathsError(err) {
+  return err instanceof git.Errors.UnmergedPathsError;
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isPushRejectedError(err) {
+  return err instanceof git.Errors.PushRejectedError;
+}
+
+/**
+ * @param {string | null} localOid
+ * @param {string | null} remoteOid
+ * @returns {Promise<Set<string>>}
+ */
+export async function getChangedNotePaths(localOid, remoteOid) {
+  const changed = new Set();
+  if (!localOid || !remoteOid) return changed;
+  if (localOid === remoteOid) return changed;
+  const results = await git.walk({
+    fs,
+    dir,
+    trees: [git.TREE({ ref: localOid }), git.TREE({ ref: remoteOid })],
+    map: async (filepath, [localEntry, remoteEntry]) => {
+      if (filepath === '.') return undefined;
+      if (!filepath.startsWith('notes/')) return undefined;
+      const [localType, remoteType] = await Promise.all([
+        localEntry ? localEntry.type() : null,
+        remoteEntry ? remoteEntry.type() : null,
+      ]);
+      if (localType === 'tree' || remoteType === 'tree') {
+        return undefined;
+      }
+      if (!localEntry || !remoteEntry) return filepath;
+      const [localEntryOid, remoteEntryOid] = await Promise.all([
+        localEntry.oid(),
+        remoteEntry.oid(),
+      ]);
+      if (localEntryOid !== remoteEntryOid) return filepath;
+      return undefined;
+    },
+  });
+  results.forEach((/** @type {any} */ filepath) => {
+    if (typeof filepath === 'string') {
+      changed.add(filepath);
+    }
+  });
+  return changed;
+}
+
+/** @param {{ filepath?: string; oid?: string; }} options */
+export function readBlob(options = {}) {
+  const defaults = { fs, dir };
+  const nextOptions = { ...options };
+  if (nextOptions.filepath) {
+    nextOptions.filepath = toRepoPath(nextOptions.filepath);
+  }
+  return git.readBlob({ ...defaults, ...nextOptions });
+}
+
+/** @param {{ filepath: string }} options  */
 export function status(options) {
   const defaults = { fs, dir };
-  return git.status({ ...defaults, ...options });
+  const nextOptions = { ...options };
+  if (typeof nextOptions.filepath === 'string') {
+    nextOptions.filepath = toRepoPath(nextOptions.filepath);
+  }
+  return git.status({ ...defaults, ...nextOptions });
 }
 
 export function statusMatrix(options = {}) {
@@ -149,7 +249,7 @@ export async function isUpToDateWithRemote() {
  */
 export async function getBlobOidAtCommit(oid, filepath) {
   try {
-    const result = await readBlob({ oid, filepath });
+    const result = await readBlob({ oid, filepath: toRepoPath(filepath) });
     return result.oid ?? null;
   } catch (err) {
     const code = getErrorCode(err);
@@ -166,7 +266,7 @@ export async function getBlobOidAtCommit(oid, filepath) {
  * @returns {Promise<string>}
  */
 export async function getHistoryContent(oid, filepath) {
-  const { blob } = await git.readBlob({ fs, dir, oid, filepath });
+  const { blob } = await git.readBlob({ fs, dir, oid, filepath: toRepoPath(filepath) });
   const decoder = new TextDecoder();
   return decoder.decode(blob);
 }
@@ -177,8 +277,9 @@ export async function getHistoryContent(oid, filepath) {
  * @returns {Promise<Awaited<ReturnType<typeof log>>>}
  */
 export async function logFileChanges(filepath, depth) {
+  const repoPath = toRepoPath(filepath);
   const commits = await log(
-    typeof depth === 'number' ? { filepath, depth } : { filepath }
+    typeof depth === 'number' ? { filepath: repoPath, depth } : { filepath: repoPath }
   );
   /** @type {Awaited<ReturnType<typeof log>>} */
   const filtered = [];
@@ -193,6 +294,85 @@ export async function logFileChanges(filepath, depth) {
     }
   }
   return filtered;
+}
+
+/**
+ * @param {string} filePath
+ * @returns {string}
+ */
+export function toRepoPath(filePath) {
+  if (filePath.startsWith(`${dir}/`)) {
+    return filePath.slice(dir.length + 1);
+  }
+  return filePath;
+}
+
+/**
+ * @param {string} repoPath
+ * @returns {string}
+ */
+function toFsPath(repoPath) {
+  if (repoPath.startsWith(`${dir}/`)) {
+    return repoPath;
+  }
+  if (repoPath.startsWith('/')) {
+    return `${dir}${repoPath}`;
+  }
+  return `${dir}/${repoPath}`;
+}
+
+/**
+ * @param {string} repoPath
+ * @returns {Promise<string>}
+ */
+export function readNoteFile(repoPath) {
+  return pfs.readFile(toFsPath(repoPath), 'utf8');
+}
+
+/**
+ * @param {string} repoPath
+ * @param {string} contents
+ * @param {string} [encoding]
+ * @returns {Promise<void>}
+ */
+export function writeNoteFile(repoPath, contents, encoding = 'utf8') {
+  return pfs.writeFile(toFsPath(repoPath), contents, encoding);
+}
+
+/**
+ * @param {string} repoPath
+ * @returns {Promise<void>}
+ */
+export function deleteNoteFile(repoPath) {
+  return pfs.unlink(toFsPath(repoPath));
+}
+
+/**
+ * @returns {Promise<{path: string}[]>}
+ */
+export async function listNoteFiles() {
+  /** @type {{path: string}[]} */
+  const files = [];
+
+  /**
+   * @param {string} currentDir
+   */
+  async function walk(currentDir) {
+    const entries = await pfs.readdir(currentDir);
+
+    for (const entry of entries) {
+      const filePath = `${currentDir}/${entry}`;
+      const stats = await pfs.stat(filePath);
+      if (stats.isDirectory()) {
+        await walk(filePath);
+      } else if (stats.isFile()) {
+        files.push({ path: toRepoPath(filePath) });
+      }
+    }
+  }
+
+  await walk(notesDir);
+  return files;
 }
 
 const STATUS_MATRIX_LABELS = {
@@ -344,5 +524,3 @@ export async function resetToRemote() {
 export async function refreshWorkingTree() {
   await git.checkout({ fs, dir, ref: 'main', force: true });
 }
-
-export { git, fs, pfs, dir, notesDir, url, FETCH_REFSPEC, author };

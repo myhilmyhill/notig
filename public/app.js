@@ -1,64 +1,69 @@
 /// <reference lib="dom" />
 'use strict';
 import {
-  git,
-  fs,
-  pfs,
-  dir,
-  notesDir,
-  clone,
-  fetch,
-  merge,
-  refreshWorkingTree,
-  applyConfigDefaults,
-  ensureConfig,
-  push,
   add,
+  applyConfigDefaults,
+  clone,
   commit,
+  commitMergeConflictMarkers,
+  deleteNoteFile,
+  ensureConfig,
+  fetch,
+  getChangedNotePaths,
+  getErrorCode,
+  getHistoryContent,
+  isMergeConflictError,
+  isPushRejectedError,
+  isUnmergedPathsError,
+  isUpToDateWithRemote,
+  listNoteFiles,
+  log,
+  logFileChanges,
+  merge,
+  push,
+  readNoteFile,
+  refreshWorkingTree,
   remove,
+  resetToRemote,
+  resolveRef,
   status,
   statusMatrix,
-  isUpToDateWithRemote,
-  logFileChanges,
-  getHistoryContent,
-  commitMergeConflictMarkers,
-  resetToRemote,
-  getErrorCode,
+  writeNoteFile,
+  writeRef,
 } from './git-api.js';
+import { openNote, registerNoteOpenedHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-editor.js';
 import {
-  parseNoteBody,
   formatUpdatedAt,
   getLatestCommitTimestamp,
   getNoteUpdatedAt,
+  parseNoteBody,
 } from './note-utils.js';
+import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
 import {
   setCurrentTagFilter,
 } from './tags.js';
 import {
-  pushBtn,
-  pullBtn,
-  resetBtn,
-  cloneBtn,
-  emptyCloneBtn,
-  deleteBtn,
-  newBtn,
-  tagFilterEl,
-  historySelectEl,
-  mobileMedia,
-  coarsePointerMedia,
-  // colorSchemeMedia,
-  mobileBackBtn,
-  setStatus as setStatusUi,
-  setMissingConfig,
-  isMobileLayout,
   applyMobileState,
-  updateCurrentNoteState as updateCurrentNoteUiState,
-  showListOnMobile as showListOnMobileUi,
-  setHasLocalCommits as setHasLocalCommitsUi,
+  coarsePointerMedia,
+  colorSchemeMedia,
+  deleteBtn,
+  emptyCloneBtn,
+  historySelectEl,
+  isMobileLayout,
+  mobileBackBtn,
+  mobileMedia,
+  newBtn,
+  pullBtn,
+  pushBtn,
   renderNoteHistory,
+  resetBtn,
+  setHasLocalCommits as setHasLocalCommitsUi,
+  setMissingConfig,
+  setStatus as setStatusUi,
+  showListOnMobile as showListOnMobileUi,
+  tagFilterEl,
+  updateCurrentNoteState as updateCurrentNoteUiState,
 } from './ui.js';
-import { getNotesScrollContainer, handleNotesScroll, renderNotesList } from './notes-list.js';
-import { openNote, registerNoteOpenedHandler, registerSaveAndCommit, showCurrentInEditor, showHistoryInEditor } from './note-editor.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -73,7 +78,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-/** @typedef {{id: Readonly<string>; body: string; updatedAt?: number; edited?: boolean}} Note */
+/** @typedef {{id: Readonly<string>; path: Readonly<string>; body: string; updatedAt?: number; edited?: boolean}} Note */
 
 
 /** @type {Note[]} */
@@ -109,28 +114,20 @@ export function showListOnMobile(options = {}) {
 }
 
 /**
- * @param {Pick<Note, 'id'> & Partial<Note>} note
- */
-function getNoteFilePath(note) {
-  return `notes/${note.id}`;
-}
-
-/**
  * @param {import('./app').Note[]} sourceNotes
  * @returns {Promise<void>}
  */
 async function buildNoteMarkers(sourceNotes) {
   const [localOid, remoteOid] = await Promise.all([
-    git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
-    git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+    resolveRef('refs/heads/main').catch(() => null),
+    resolveRef('refs/remotes/origin/main').catch(() => null),
   ]);
   const hasLocalCommits = await hasLocalCommitsToPush(localOid, remoteOid);
   setHasLocalCommitsUi(hasLocalCommits);
   const changedPaths = await getChangedNotePaths(localOid, remoteOid);
 
   for (const note of sourceNotes) {
-    const filepath = getNoteFilePath(note);
-    const edited = changedPaths.has(filepath);
+    const edited = changedPaths.has(note.path);
     note.edited = edited;
   }
 }
@@ -157,7 +154,7 @@ async function isOidInHistory(ref, targetOid) {
   let depth = step;
   let lastCount = 0;
   while (depth <= 2000) {
-    const entries = await git.log({ fs, dir, ref, depth });
+    const entries = await log({ ref, depth });
     if (entries.some((entry) => entry.oid === targetOid)) {
       return true;
     }
@@ -175,61 +172,16 @@ async function isOidInHistory(ref, targetOid) {
  * @param {string | null} remoteOid
  * @returns {Promise<Set<string>>}
  */
-async function getChangedNotePaths(localOid, remoteOid) {
-  const changed = new Set();
-  if (!localOid || !remoteOid) return changed;
-  if (localOid === remoteOid) return changed;
-  const results = await git.walk({
-    fs,
-    dir,
-    trees: [git.TREE({ ref: localOid }), git.TREE({ ref: remoteOid })],
-    map: async (filepath, [localEntry, remoteEntry]) => {
-      if (filepath === '.') return undefined;
-      if (!filepath.startsWith('notes/')) return undefined;
-      const [localType, remoteType] = await Promise.all([
-        localEntry ? localEntry.type() : null,
-        remoteEntry ? remoteEntry.type() : null,
-      ]);
-      if (localType === 'tree' || remoteType === 'tree') {
-        return undefined;
-      }
-      if (!localEntry || !remoteEntry) return filepath;
-      const [localEntryOid, remoteEntryOid] = await Promise.all([
-        localEntry.oid(),
-        remoteEntry.oid(),
-      ]);
-      if (localEntryOid !== remoteEntryOid) return filepath;
-      return undefined;
-    },
-  });
-  results.forEach((/** @type {any} */ filepath) => {
-    if (typeof filepath === 'string') {
-      changed.add(filepath);
-    }
-  });
-  return changed;
-}
-
 /**
  * @param {import("./app").Note[]} notes
  */
 export async function refreshNotesList(notes) {
   await buildNoteMarkers(notes);
-  renderNotesList(notes, currentNote?.id ?? null, openNote);
+  renderNotesList(notes, currentNote, openNote);
 }
 
 function randomId() {
   return crypto.randomUUID();
-}
-
-/**
- * @param {string} filePath
- * @returns {string}
- */
-function getNoteIdFromPath(filePath) {
-  return filePath.startsWith(`${notesDir}/`)
-    ? filePath.slice(notesDir.length + 1)
-    : filePath;
 }
 
 async function cloneRepo() {
@@ -241,41 +193,11 @@ async function cloneRepo() {
 }
 
 /**
- * @param {string} rootDir
- * @returns {Promise<{path: string}[]>}
- */
-async function listNoteFiles(rootDir) {
-  /** @type {{path: string}[]} */
-  const files = [];
-
-  /**
-   * @param {string} currentDir
-   */
-  async function walk(currentDir) {
-    const entries = await pfs.readdir(currentDir);
-
-    for (const entry of entries) {
-      const filePath = `${currentDir}/${entry}`;
-      const stats = await pfs.stat(filePath);
-      if (stats.isDirectory()) {
-        await walk(filePath);
-      } else if (stats.isFile()) {
-        files.push({ path: filePath });
-      }
-    }
-  }
-
-  await walk(rootDir);
-  return files;
-}
-
-/**
  * @param {{onBatch?: () => void}} [options]
  */
 async function loadNotes(options = {}) {
   const { onBatch } = options;
-  const useCommitTimestamp = true;
-  const files = await listNoteFiles(notesDir);
+  const files = await listNoteFiles();
 
   /** @type {Note[]} */
   const loadedNotes = [];
@@ -283,25 +205,19 @@ async function loadNotes(options = {}) {
   let batch = [];
 
   /**
-   * @param {{ path: any; }[]} entries
+   * @param {{ path: string; }[]} entries
    */
   async function loadBatch(entries) {
     const results = await Promise.all(entries.map(async ({ path }) => {
-      const relId = getNoteIdFromPath(path);
-      const relPath = getNoteFilePath({ id: relId });
+      const relId = path.slice('notes/'.length);
       try {
-        /** @type {string} */
-        const body = await pfs.readFile(path, 'utf8');
+        const body = await readNoteFile(path);
         const parsed = parseNoteBody(body);
-        const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
-        let updatedAt = frontMatterUpdatedAt;
-        if (typeof updatedAt !== 'number' && useCommitTimestamp) {
-          updatedAt = await getLatestCommitTimestamp(relPath);
-        }
         return {
           id: relId,
+          path,
           body,
-          updatedAt,
+          updatedAt: getNoteUpdatedAt(parsed) ?? await getLatestCommitTimestamp(path),
         };
       } catch (err) {
         if (getErrorCode(err) === 'ENOENT') return null;
@@ -349,8 +265,7 @@ async function loadAndRenderHistory(note) {
   renderNoteHistory([], { emptyMessage: '履歴を読み込んでいます' });
 
   try {
-    const filepath = getNoteFilePath(note);
-    const commits = await logFileChanges(filepath);
+    const commits = await logFileChanges(note.path);
     const validCommits = commits.filter(
       (entry) => typeof entry.commit?.author?.timestamp === 'number'
     );
@@ -378,9 +293,8 @@ async function loadAndRenderHistory(note) {
  * @param {Note} note
  */
 async function saveNoteFile(note) {
-  const relPath = getNoteFilePath(note);
-  await pfs.writeFile(`${dir}/${relPath}`, note.body, 'utf8');
-  return relPath;
+  if (!note.path) throw new Error('Missing note.path');
+  await writeNoteFile(note.path, note.body);
 }
 
 /**
@@ -419,9 +333,6 @@ function updateHistoryForNote(noteId, options = {}) {
   hasInitializedHistoryState = true;
 }
 
-// /**
-//  * @param {{eager?: boolean}} options 
-//  */
 /**
  * @param {Note} note
  */
@@ -435,7 +346,9 @@ async function createNote() {
   const id = randomId();
   /** @type {Note} */
   const note = {
-    id, body: '---\ntitle: \n---\n\n'
+    id,
+    path: `notes/${id}`,
+    body: '---\ntitle: \n---\n\n',
   };
   notes.unshift(note);
   await saveNoteFile(note);
@@ -541,6 +454,7 @@ async function createSharedNote(payload) {
   const id = randomId();
   const note = {
     id,
+    path: `notes/${id}`,
     body: buildSharedNoteBody(payload),
   };
   notes.unshift(note);
@@ -584,17 +498,16 @@ async function handleShareTarget() {
 async function deleteCurrentNote() {
   if (!currentNote) return;
   const targetIndex = notes.findIndex((note) => note === currentNote);
-  const filepath = getNoteFilePath(currentNote);
-  const prevStatus = await status({ filepath });
+  const prevStatus = await status({ filepath: currentNote.path });
 
   try {
-    await pfs.unlink(`${dir}/${filepath}`);
+    await deleteNoteFile(currentNote.path);
   } catch (err) {
     if (getErrorCode(err) !== 'ENOENT') throw err;
   }
 
   try {
-    await remove({ filepath });
+    await remove({ filepath: currentNote.path });
   } catch (err) {
     // Ignore if the file was never tracked
     if (getErrorCode(err) !== 'NotFoundError') throw err;
@@ -629,17 +542,17 @@ async function saveAndCommit(note) {
   if (typeof frontMatterUpdatedAt === 'number') {
     note.updatedAt = frontMatterUpdatedAt;
   }
-  const filepath = await saveNoteFile(note);
+  await saveNoteFile(note);
   notes.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-  await add({ filepath });
-  const s = await status({ filepath });
+  await add({ filepath: note.path });
+  const s = await status({ filepath: note.path });
   const modified = s === 'modified' || s === '*modified' || s === 'deleted' || s === '*deleted' || s === 'added' || s === '*added';
   if (modified) {
     await commit();
     if (typeof frontMatterUpdatedAt === 'number') {
       note.updatedAt = frontMatterUpdatedAt;
     } else {
-      note.updatedAt = await getLatestCommitTimestamp(filepath);
+      note.updatedAt = await getLatestCommitTimestamp(note.path);
     }
     await loadNotes();
   }
@@ -663,10 +576,7 @@ async function pushChanges() {
     await loadNotes();
     await refreshNotesList(notes);
   } catch (err) {
-    if (
-      err instanceof git.Errors.MergeConflictError ||
-      err instanceof git.Errors.UnmergedPathsError
-    ) {
+    if (isMergeConflictError(err) || isUnmergedPathsError(err)) {
       await loadNotes();
       await refreshNotesList(notes);
       if (currentNote) {
@@ -687,22 +597,16 @@ async function pushChanges() {
   try {
     await push();
     const [postLocalOid, postRemoteOid] = await Promise.all([
-      git.resolveRef({ fs, dir, ref: 'refs/heads/main' }).catch(() => null),
-      git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' }).catch(() => null),
+      resolveRef('refs/heads/main').catch(() => null),
+      resolveRef('refs/remotes/origin/main').catch(() => null),
     ]);
     if (postLocalOid) {
-      await git.writeRef({
-        fs,
-        dir,
-        ref: 'refs/remotes/origin/main',
-        value: postLocalOid,
-        force: true,
-      });
+      await writeRef('refs/remotes/origin/main', postLocalOid, true);
     }
     setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
     await refreshNotesList(notes);
   } catch (err) {
-    if (err instanceof git.Errors.PushRejectedError) {
+    if (isPushRejectedError(err)) {
       const upToDate = await isUpToDateWithRemote();
       if (upToDate) {
         setStatusUi(conflictCommitted ? 'pushed (conflict committed)' : 'pushed');
@@ -718,9 +622,6 @@ async function pullChanges() {
   try {
     await fetch();
     await merge({ abortOnConflict: false });
-    // if (!hasUnsavedChanges) {
-      await refreshWorkingTree();
-    // }
     await loadNotes();
     await refreshNotesList(notes);
     if (currentNote) {
@@ -733,18 +634,9 @@ async function pullChanges() {
     }
     setStatusUi('pulled');
   } catch (err) {
-    if (err instanceof git.Errors.MergeConflictError) {
-      // if (!hasUnsavedChanges) {
-        await resetToRemote();
-        await loadNotes();
-        await refreshNotesList(notes);
-        setStatusUi('pulled (remote)');
-        return;
-      // }
-      
+    if (isMergeConflictError(err)) {
       const committed = await commitMergeConflictMarkers();
       setStatusUi(committed ? 'merge conflict committed' : 'merge conflict (markers created)');
-      
     } else {
       throw err;
     }
@@ -772,7 +664,7 @@ async function removeLocalOnlyNotes() {
   const matrix = await statusMatrix();
   const localOnly = matrix.filter(([path, head]) => head === 0 && path.startsWith('notes/'));
   for (const [path] of localOnly) {
-    await pfs.unlink(`${dir}/${path}`);
+    await deleteNoteFile(path);
     await remove({ filepath: path });
   }
 }
@@ -800,7 +692,7 @@ async function bootstrap() {
     await refreshWorkingTree();
     await loadNotes({
       onBatch: () => {
-        renderNotesList(notes, currentNote?.id ?? null, openNote, { preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentNote, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
     await refreshNotesList(notes);
@@ -808,7 +700,7 @@ async function bootstrap() {
     const committed = await commitMergeConflictMarkers();
     setStatusUi(committed ? 'merge conflict committed' : 'synced');
   } catch (err) {
-    if (err instanceof git.Errors.MergeConflictError) {
+    if (isMergeConflictError(err)) {
       const committed = await commitMergeConflictMarkers();
       setStatusUi(committed ? 'merge conflict committed' : 'conflict');
     }
@@ -817,7 +709,7 @@ async function bootstrap() {
   if (!didLoadNotes) {
     await loadNotes({
       onBatch: () => {
-        renderNotesList(notes, currentNote?.id ?? null, openNote, { preserveScroll: true, skipAutoLoad: true });
+        renderNotesList(notes, currentNote, openNote, { preserveScroll: true, skipAutoLoad: true });
       },
     });
     await refreshNotesList(notes);
@@ -849,9 +741,6 @@ resetBtn.addEventListener('click', () => {
   resetNotesToOrigin();
 });
 
-if (cloneBtn) {
-  cloneBtn.addEventListener('click', handleCloneAction);
-}
 if (emptyCloneBtn) {
   emptyCloneBtn.addEventListener('click', handleCloneAction);
 }
@@ -862,7 +751,7 @@ newBtn.addEventListener('click', () => {
 
 tagFilterEl.addEventListener('change', () => {
   setCurrentTagFilter(tagFilterEl.value);
-  renderNotesList(notes, currentNote?.id ?? null, openNote, { resetVisibleCount: true, scrollToTop: true });
+  renderNotesList(notes, currentNote, openNote, { resetVisibleCount: true, scrollToTop: true });
 });
 
 deleteBtn.addEventListener('click', () => {
@@ -876,14 +765,13 @@ historySelectEl.addEventListener('change', async () => {
     showCurrentInEditor(currentNote);
     return;
   }
-  const filepath = getNoteFilePath(currentNote);
-  const body = await getHistoryContent(oid, filepath);
+  const body = await getHistoryContent(oid, currentNote.path);
   showHistoryInEditor(body);
 });
 applyMobileUiState();
 
 const notesScrollContainer = getNotesScrollContainer();
-notesScrollContainer.addEventListener('scroll', () => handleNotesScroll(notes, currentNote?.id ?? null, openNote));
+notesScrollContainer.addEventListener('scroll', () => handleNotesScroll(notes, currentNote, openNote));
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener('click', () => {
@@ -891,18 +779,9 @@ if (mobileBackBtn) {
   });
 }
 
-// colorSchemeMedia.addEventListener('change', () => {
-//   const markdown = isViewingHistorySnapshot
-//     ? historyMarkdown
-//     : editor
-//       ? editor.getMarkdown()
-//       : currentMarkdown;
-//   createEditor(markdown, {
-//     viewer: isViewingHistorySnapshot,
-//     preserveCurrentMarkdown: isViewingHistorySnapshot,
-//   });
-//   setEditorReadOnly(isViewingHistorySnapshot);
-// });
+colorSchemeMedia.addEventListener('change', () => {
+  
+});
 
 mobileMedia.addEventListener('change', applyMobileUiState);
 coarsePointerMedia.addEventListener('change', applyMobileUiState);

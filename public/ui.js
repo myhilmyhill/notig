@@ -35,8 +35,6 @@ export const pushBtn = getRequiredElement('push-notes');
 export const pullBtn = getRequiredElement('pull-notes');
 /** @type {HTMLButtonElement} */
 export const resetBtn = getRequiredElement('reset-notes');
-/** @type {HTMLButtonElement | null} */
-export const cloneBtn = document.getElementById('clone');
 /** @type {HTMLButtonElement} */
 export const emptyCloneBtn = getRequiredElement('empty-clone');
 /** @type {HTMLButtonElement} */
@@ -142,11 +140,11 @@ export function setActiveNoteInList(currentId) {
 }
 
 /**
- * @param {{id: string; body: string; updatedAt?: number; edited?: boolean}[]} notes
- * @param {string | null} currentId
- * @param {(note: {id: string; body: string; updatedAt?: number; edited?: boolean}) => Promise<void> | void} onOpenNote
+ * @param {import('./app.js').Note[]} notes
+ * @param {import('./app.js').Note | null} currentNote
+ * @param {(note: import('./app.js').Note) => Promise<void> | void} onOpenNote
  */
-export function renderNotes(notes, currentId, onOpenNote) {
+export function renderNotes(notes, currentNote, onOpenNote) {
   listEl.innerHTML = '';
   let currentGroupLabel = '';
   notes.forEach((note) => {
@@ -179,7 +177,7 @@ export function renderNotes(notes, currentId, onOpenNote) {
       li.classList.add('has-marker');
     }
     li.dataset.id = note.id;
-    if (note.id === currentId) {
+    if (note.id === currentNote?.id) {
       li.classList.add('active');
     }
     li.addEventListener('click', async () => {
