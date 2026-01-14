@@ -49,15 +49,8 @@ export const mobileMedia = window.matchMedia('(max-width: 1024px)');
 export const coarsePointerMedia = window.matchMedia('(pointer: coarse)');
 export const colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
-/** @type {HTMLButtonElement | null} */
-export let mobileBackBtn = null;
-if (headerEl) {
-  mobileBackBtn = document.createElement('button');
-  mobileBackBtn.id = 'mobile-back';
-  mobileBackBtn.type = 'button';
-  mobileBackBtn.textContent = 'Notes';
-  headerEl.insertBefore(mobileBackBtn, headerEl.firstChild);
-}
+/** @type {HTMLButtonElement} */
+export const mobileBackBtn = getRequiredElement('mobile-back');
 
 let baseStatusText = 'offline';
 let hasLocalCommits = false;

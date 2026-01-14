@@ -215,6 +215,21 @@ export function statusMatrix(options = {}) {
   return git.statusMatrix({ ...defaults, ...options });
 }
 
+/**
+ * @param {{ oids: string[] }} options
+ * @returns {Promise<string[]>}
+ */
+export function findMergeBase(options) {
+  const defaults = { fs, dir };
+  return git.findMergeBase({ ...defaults, ...options });
+}
+
+/** @param {{ oid: string }} options */
+export function readCommit(options) {
+  const defaults = { fs, dir };
+  return git.readCommit({ ...defaults, ...options });
+}
+
 export function getConfig(options = {}) {
   const defaults = { fs, dir };
   return git.getConfig({ ...defaults, ...options });

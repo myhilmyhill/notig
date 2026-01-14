@@ -105,7 +105,7 @@ export function formatUpdatedAt(timestamp) {
  */
 export function getUpdatedAtGroupLabel(timestamp, now = Date.now()) {
   if (!timestamp) return 'Unknown';
-  const startOfDay = (value) => {
+  const startOfDay = (/** @type {string | number | Date} */ value) => {
     const date = new Date(value);
     date.setHours(0, 0, 0, 0);
     return date.getTime();

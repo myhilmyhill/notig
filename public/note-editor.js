@@ -13,7 +13,7 @@ let editor = null;
 
 /** @type {((note: import('./app.js').Note) => Promise<boolean> | boolean | void) | null} */
 let saveAndCommitHandler = null;
-/** @type {((note: import('./app.js').Note) => Promise<void> | void) | null} */
+/** @type {((note: import('./app.js').Note, options?: any) => Promise<void> | void) | null} */
 let noteOpenedHandler = null;
 
 /**
@@ -24,7 +24,7 @@ export function registerSaveAndCommit(handler) {
 }
 
 /**
- * @param {(note: import('./app.js').Note) => Promise<void> | void} handler
+ * @param {(note: import('./app.js').Note, options?: any) => Promise<void> | void} handler
  */
 export function registerNoteOpenedHandler(handler) {
   noteOpenedHandler = handler;
@@ -104,7 +104,7 @@ export async function openNote(note, options = {}) {
   historySelectEl.value = '';
   showEditorOnMobile();
   if (noteOpenedHandler) {
-    await noteOpenedHandler(note);
+    await noteOpenedHandler(note, options);
   }
 }
 

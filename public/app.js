@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 'use strict';
 import {
   add,
@@ -12,12 +11,12 @@ import {
   getChangedNotePaths,
   getErrorCode,
   getHistoryContent,
+  findMergeBase,
   isMergeConflictError,
   isPushRejectedError,
   isUnmergedPathsError,
   isUpToDateWithRemote,
   listNoteFiles,
-  log,
   logFileChanges,
   merge,
   push,
@@ -57,6 +56,7 @@ import {
   pushBtn,
   renderNoteHistory,
   resetBtn,
+  setActiveNoteInList,
   setHasLocalCommits as setHasLocalCommitsUi,
   setMissingConfig,
   setStatus as setStatusUi,
@@ -69,11 +69,25 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js');
   });
-  navigator.serviceWorker.addEventListener('message', (event) => {
-    const data = event.data;
-    if (!data || data.type !== 'share-target') return;
-    if (data.payload && typeof data.payload === 'object') {
-      handleSharePayload(data.payload);
+  navigator.serviceWorker.addEventListener('message', async (event) => {
+    if (event?.data?.type === 'share-target') {
+      try {
+        if (!await ensureConfig()) {
+          throw new Error('クローンされていません。リポジトリをクローンしてください。');
+        }
+
+        const payload = event.data.payload;
+        if (payload && typeof payload === 'object') {
+          const hasContent = Boolean(
+            payload.title?.trim() || payload.text?.trim() || payload.url?.trim()
+          );
+          setStatusUi(hasContent ? 'share received' : 'share target opened (empty)');
+
+          await createNote(payload);
+        }
+      } finally {
+        clearShareTargetParams();
+      }
     }
   });
 }
@@ -88,7 +102,6 @@ let currentNote = null;
 let isHandlingPopState = false;
 let hasInitializedHistoryState = false;
 const NOTES_LOAD_BATCH_SIZE = 40;
-let hasHandledShareTarget = false;
 
 function applyMobileUiState() {
   applyMobileState(currentNote != null);
@@ -140,31 +153,9 @@ async function buildNoteMarkers(sourceNotes) {
 async function hasLocalCommitsToPush(localOid, remoteOid) {
   if (!localOid || !remoteOid) return false;
   if (localOid === remoteOid) return false;
-  const localIsAncestor = await isOidInHistory('refs/remotes/origin/main', localOid);
+  const mergeBases = await findMergeBase({ oids: [localOid, remoteOid] });
+  const localIsAncestor = mergeBases.includes(localOid);
   return !localIsAncestor;
-}
-
-/**
- * @param {string} ref
- * @param {string} targetOid
- * @returns {Promise<boolean>}
- */
-async function isOidInHistory(ref, targetOid) {
-  const step = 100;
-  let depth = step;
-  let lastCount = 0;
-  while (depth <= 2000) {
-    const entries = await log({ ref, depth });
-    if (entries.some((entry) => entry.oid === targetOid)) {
-      return true;
-    }
-    if (entries.length < depth || entries.length === lastCount) {
-      return false;
-    }
-    lastCount = entries.length;
-    depth += step;
-  }
-  return false;
 }
 
 /**
@@ -335,106 +326,47 @@ function updateHistoryForNote(noteId, options = {}) {
 
 /**
  * @param {Note} note
+ * @param {{source?: "user" | "history" | "system"}} [options]
  */
-async function handleNoteOpened(note) {
+async function handleNoteOpened(note, options = {}) {
   currentNote = note;
   historySelectEl.value = '';
   await loadAndRenderHistory(note);
+  if (options.source === 'user') {
+    updateHistoryForNote(note.id);
+  }
 }
 
-async function createNote() {
+/**
+ * @param {{title?: string; text?: string; url?: string} | undefined} payload
+ */
+function buildNoteBody(payload) {
+  if (!payload) {
+    return ['---', 'title: ', '---', '', ''].join('\n');
+  }
+  const sections = ['---'];
+  if (payload.title) sections.push(`title: ${payload.title}`);
+  sections.push('---', '');
+  if (payload.text) sections.push(payload.text, '');
+  if (payload.url) sections.push('', payload.url);
+  return sections.join('\n');
+}
+
+/**
+ * @param {{title?: string; text?: string; url?: string}} [payload]
+ */
+async function createNote(payload) {
   const id = randomId();
+  const body = buildNoteBody(payload);
   /** @type {Note} */
   const note = {
     id,
     path: `notes/${id}`,
-    body: '---\ntitle: \n---\n\n',
+    body,
   };
   notes.unshift(note);
-  await saveNoteFile(note);
   refreshNotesList(notes);
   openNote(note, { source: 'user' });
-}
-
-/**
- * @param {{title?: string; text?: string; url?: string; rawQuery?: string}} payload
- * @returns {string}
- */
-function buildSharedNoteBody(payload) {
-  const title = payload.title?.trim() ?? '';
-  const titleLine = title ? `title: ${JSON.stringify(title)}` : 'title: ';
-  const url = getShareUrlFromPayload(payload);
-  const urlLine = url ? `url: ${url.replace(/\r?\n/g, ' ')}` : '';
-  const rawQuery = payload.rawQuery?.trim() ?? '';
-  const queryHash = rawQuery ? hashString(rawQuery) : '';
-  const parts = [];
-  if (queryHash) {
-    parts.push(`query_hash: ${queryHash}`);
-  }
-  if (payload.text?.trim()) {
-    parts.push(payload.text.trim());
-  }
-  if (payload.url?.trim()) {
-    parts.push(payload.url.trim());
-  }
-  const content = parts.join('\n\n');
-  const frontMatterLines = ['---', titleLine];
-  if (urlLine) {
-    frontMatterLines.push(urlLine);
-  }
-  if (queryHash) {
-    frontMatterLines.push(`query_hash: ${queryHash}`);
-  }
-  frontMatterLines.push('---');
-  return `${frontMatterLines.join('\n')}\n\n${content}\n`;
-}
-
-/**
- * @returns {{title?: string; text?: string; url?: string; rawQuery?: string} | null}
- */
-function getShareTargetPayloadFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const title = params.get('title') ?? '';
-  const text = params.get('text') ?? '';
-  const url = params.get('url') ?? '';
-  if (!title.trim() && !text.trim() && !url.trim()) return null;
-  return { title, text, url, rawQuery: window.location.search };
-}
-
-/**
- * @param {{title?: string; text?: string; url?: string; rawQuery?: string}} payload
- * @returns {string}
- */
-function getShareUrlFromPayload(payload) {
-  const direct = payload.url?.trim() ?? '';
-  if (direct) return direct;
-  const text = payload.text?.trim() ?? '';
-  if (!text) return '';
-  const match = text.match(/https?:\/\/\S+/);
-  return match ? match[0] : '';
-}
-
-/**
- * @param {string} value
- * @returns {string}
- */
-function hashString(value) {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash) + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return (hash >>> 0).toString(16);
-}
-
-/**
- * @param {Note} note
- * @returns {string}
- */
-function getNoteShareUrl(note) {
-  const parsed = parseNoteBody(note.body);
-  const urlValue = parsed.frontMatter.url ?? parsed.frontMatter.Url ?? '';
-  return typeof urlValue === 'string' ? urlValue.trim() : '';
 }
 
 function clearShareTargetParams() {
@@ -445,54 +377,6 @@ function clearShareTargetParams() {
   if (nextUrl.href !== window.location.href) {
     history.replaceState(history.state, '', nextUrl);
   }
-}
-
-/**
- * @param {{title?: string; text?: string; url?: string}} payload
- */
-async function createSharedNote(payload) {
-  const id = randomId();
-  const note = {
-    id,
-    path: `notes/${id}`,
-    body: buildSharedNoteBody(payload),
-  };
-  notes.unshift(note);
-  await saveNoteFile(note);
-  await refreshNotesList(notes);
-  await openNote(note, { source: 'user' });
-}
-
-/**
- * @param {{title?: string; text?: string; url?: string}} payload
- */
-async function handleSharePayload(payload) {
-  if (hasHandledShareTarget) return;
-  if (!payload || typeof payload !== 'object') return;
-  const shareUrl = getShareUrlFromPayload(payload);
-  if (shareUrl) {
-    const matched = notes.find((note) => getNoteShareUrl(note) === shareUrl) ?? null;
-    if (matched) {
-      hasHandledShareTarget = true;
-      setStatusUi('share opened existing');
-      clearShareTargetParams();
-      await openNote(matched, { source: 'user' });
-      return;
-    }
-  }
-  hasHandledShareTarget = true;
-  const hasContent = Boolean(
-    payload.title?.trim() || payload.text?.trim() || payload.url?.trim()
-  );
-  setStatusUi(hasContent ? 'share received' : 'share target opened (empty)');
-  clearShareTargetParams();
-  await createSharedNote(payload);
-}
-
-async function handleShareTarget() {
-  const payload = getShareTargetPayloadFromUrl();
-  if (!payload) return;
-  await handleSharePayload(payload);
 }
 
 async function deleteCurrentNote() {
@@ -780,7 +664,7 @@ if (mobileBackBtn) {
 }
 
 colorSchemeMedia.addEventListener('change', () => {
-  
+
 });
 
 mobileMedia.addEventListener('change', applyMobileUiState);
@@ -803,6 +687,9 @@ async function handlePopState(event) {
     if (isMobileLayout()) {
       showListOnMobile({ source: 'history' });
     }
+    currentNote = null;
+    updateCurrentNoteState();
+    setActiveNoteInList(undefined);
   } finally {
     isHandlingPopState = false;
   }
@@ -820,7 +707,4 @@ window.addEventListener('unhandledrejection', (event) => {
 registerSaveAndCommit(saveAndCommit);
 registerNoteOpenedHandler(handleNoteOpened);
 
-bootstrap()
-  .finally(() => {
-    handleShareTarget();
-  });
+bootstrap();
