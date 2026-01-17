@@ -16,6 +16,18 @@ const author = {
   email: 'user@example.com',
 };
 
+/**
+ * @param {object} options
+ * @param {string} [options.url]
+ * @param {string} [options.ref]
+ * @param {boolean} [options.singleBranch]
+ * @param {number} [options.depth]
+ * @param {Date} [options.since]
+ * @param {string[]} [options.exclude]
+ * @param {boolean} [options.relative]
+ * @param {Object<string, string>} [options.headers]
+ * @returns {Promise<void>}
+ */
 export function clone(options = {}) {
   const defaults = {
     fs,
@@ -28,12 +40,21 @@ export function clone(options = {}) {
   return git.clone({ ...defaults, ...options });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.defaultBranch]
+ * @param {boolean} [options.bare]
+ * @returns {Promise<void>}
+ */
 export function init(options = {}) {
   const defaults = { fs, dir, defaultBranch: 'main' };
   return git.init({ ...defaults, ...options });
 }
 
-/** @param {{ filepath?: string; ref?: string; depth?: number }} options */
+/**
+ * @param {{ filepath?: string; ref?: string; depth?: number; since?: Date }} options
+ * @returns {Promise<Array<import('https://esm.sh/isomorphic-git').ReadCommitResult>>}
+ */
 export function log(options = {}) {
   const defaults = { fs, dir };
   const nextOptions = { ...options };
@@ -43,7 +64,10 @@ export function log(options = {}) {
   return git.log({ ...defaults, ...nextOptions });
 }
 
-/** @param {{ filepath?: string }} options */
+/**
+ * @param {{ filepath?: string }} options
+ * @returns {Promise<void>}
+ */
 export function add(options = {}) {
   const defaults = { fs, dir };
   const nextOptions = { ...options };
@@ -53,12 +77,27 @@ export function add(options = {}) {
   return git.add({ ...defaults, ...nextOptions });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.message]
+ * @param {Object} [options.author]
+ * @param {string} [options.author.name]
+ * @param {string} [options.author.email]
+ * @param {Object} [options.committer]
+ * @param {string} [options.committer.name]
+ * @param {string} [options.committer.email]
+ * @param {string} [options.signingKey]
+ * @returns {Promise<string>} The SHA-1 object id of the commit
+ */
 export function commit(options = {}) {
   const defaults = { fs, dir, author, message: 'update' };
   return git.commit({ ...defaults, ...options });
 }
 
-/** @param {{ filepath?: string }} options */
+/**
+ * @param {{ filepath?: string }} options
+ * @returns {Promise<void>}
+ */
 export function remove(options = {}) {
   const defaults = { fs, dir };
   const nextOptions = { ...options };
@@ -68,11 +107,29 @@ export function remove(options = {}) {
   return git.remove({ ...defaults, ...nextOptions });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.remote]
+ * @param {string} [options.ref]
+ * @param {string} [options.remoteRef]
+ * @param {boolean} [options.force]
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').PushResult>}
+ */
 export function push(options = {}) {
   const defaults = { fs, dir, http, url, remote: 'origin', ref: 'main' };
   return git.push({ ...defaults, ...options });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.remote]
+ * @param {string} [options.ref]
+ * @param {boolean} [options.singleBranch]
+ * @param {boolean} [options.fastForward]
+ * @param {Object<string, string>} [options.headers]
+ * @param {Object} [options.author]
+ * @returns {Promise<void>}
+ */
 export function pull(options = {}) {
   const defaults = {
     fs,
@@ -86,6 +143,16 @@ export function pull(options = {}) {
   return git.pull({ ...defaults, ...options });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.remote]
+ * @param {string} [options.ref]
+ * @param {boolean} [options.singleBranch]
+ * @param {number} [options.depth]
+ * @param {boolean} [options.relative]
+ * @param {Object<string, string>} [options.headers]
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').FetchResult>}
+ */
 export function fetch(options = {}) {
   const defaults = {
     fs,
@@ -98,6 +165,15 @@ export function fetch(options = {}) {
   return git.fetch({ ...defaults, ...options });
 }
 
+/**
+ * @param {object} options
+ * @param {string} [options.ours]
+ * @param {string} [options.theirs]
+ * @param {boolean} [options.fastForward]
+ * @param {boolean} [options.abortOnConflict]
+ * @param {Object} [options.author]
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').MergeResult>}
+ */
 export function merge(options = {}) {
   const defaults = {
     fs,
@@ -190,7 +266,10 @@ export async function getChangedNotePaths(localOid, remoteOid) {
   return changed;
 }
 
-/** @param {{ filepath?: string; oid?: string; }} options */
+/**
+ * @param {{ filepath?: string; oid?: string; }} options
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').ReadBlobResult>}
+ */
 export function readBlob(options = {}) {
   const defaults = { fs, dir };
   const nextOptions = { ...options };
@@ -200,7 +279,10 @@ export function readBlob(options = {}) {
   return git.readBlob({ ...defaults, ...nextOptions });
 }
 
-/** @param {{ filepath: string }} options  */
+/**
+ * @param {{ filepath: string; }} options
+ * @returns {Promise<string>} 'ignored'|'unmodified'|'modified'|'added'|'deleted'|'absent'|'*text'
+ */
 export function status(options) {
   const defaults = { fs, dir };
   const nextOptions = { ...options };
@@ -210,6 +292,10 @@ export function status(options) {
   return git.status({ ...defaults, ...nextOptions });
 }
 
+/**
+ * @param {{ filter?: (path: string) => boolean; dirs?: string[]; ref?: string; }} options
+ * @returns {Promise<Array<[string, number, number, number]>>}
+ */
 export function statusMatrix(options = {}) {
   const defaults = { fs, dir };
   return git.statusMatrix({ ...defaults, ...options });
@@ -224,22 +310,36 @@ export function findMergeBase(options) {
   return git.findMergeBase({ ...defaults, ...options });
 }
 
-/** @param {{ oid: string }} options */
+/**
+ * @param {{ oid: string; }} options
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').ReadCommitResult>}
+ */
 export function readCommit(options) {
   const defaults = { fs, dir };
   return git.readCommit({ ...defaults, ...options });
 }
 
+/**
+ * @param {{ path: string; }} options
+ * @returns {Promise<any>}
+ */
 export function getConfig(options = {}) {
   const defaults = { fs, dir };
   return git.getConfig({ ...defaults, ...options });
 }
 
+/**
+ * @param {{ path: string; value: any; }} options
+ * @returns {Promise<void>}
+ */
 export function setConfig(options = {}) {
   const defaults = { fs, dir };
   return git.setConfig({ ...defaults, ...options });
 }
 
+/**
+ * @returns {Promise<boolean>}
+ */
 export async function isUpToDateWithRemote() {
   try {
     await fetch();
@@ -468,6 +568,9 @@ async function safeGetConfig(path) {
   }
 }
 
+/**
+ * @returns {Promise<boolean>}
+ */
 export async function ensureConfig() {
   const remoteUrl = await safeGetConfig('remote.origin.url');
   const fetchRefspec = await safeGetConfig('remote.origin.fetch');
@@ -481,6 +584,9 @@ export async function ensureConfig() {
   );
 }
 
+/**
+ * @returns {Promise<void>}
+ */
 export async function applyConfigDefaults() {
   const remoteUrl = await safeGetConfig('remote.origin.url');
   if (remoteUrl !== url) {
@@ -528,6 +634,9 @@ export async function commitMergeConflictMarkers() {
   return true;
 }
 
+/**
+ * @returns {Promise<void>}
+ */
 export async function resetToRemote() {
   const remoteRef = 'refs/remotes/origin/main';
   const localRef = 'refs/heads/main';
@@ -536,6 +645,9 @@ export async function resetToRemote() {
   await git.checkout({ fs, dir, ref: 'main', force: true });
 }
 
+/**
+ * @returns {Promise<void>}
+ */
 export async function refreshWorkingTree() {
   await git.checkout({ fs, dir, ref: 'main', force: true });
 }

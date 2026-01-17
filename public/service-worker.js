@@ -2,10 +2,6 @@
 
 'use strict';
 
-/** @type {ServiceWorkerGlobalScope} */
-const sw = /** @type {any} */ (self);
-
-
 const CACHE_NAME = 'notig-static-v15';
 const PRECACHE_URLS = [
   './',
@@ -20,18 +16,18 @@ const PRECACHE_URLS = [
   './icon-512.png',
 ];
 
-sw.addEventListener('install', /** @param {ExtendableEvent} event */(event) => {
+self.addEventListener('install', (event) => {
 
   event.waitUntil(
     caches
       .open(CACHE_NAME)
       .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => sw.skipWaiting())
+      .then(() => self.skipWaiting())
 
   );
 });
 
-sw.addEventListener('activate', /** @param {ExtendableEvent} event */(event) => {
+self.addEventListener('activate', (event) => {
 
   event.waitUntil(
     caches
@@ -39,13 +35,13 @@ sw.addEventListener('activate', /** @param {ExtendableEvent} event */(event) => 
       .then((keys) =>
         Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
       )
-      .then(() => sw.clients.claim())
+      .then(() => self.clients.claim())
   );
 });
 
-sw.addEventListener('fetch', /** @param {FetchEvent} event */(event) => {
+self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
-  const isSameOrigin = requestUrl.origin === sw.location.origin;
+  const isSameOrigin = requestUrl.origin === self.location.origin;
 
   if (event.request.method !== 'GET') return;
 
@@ -61,7 +57,7 @@ sw.addEventListener('fetch', /** @param {FetchEvent} event */(event) => {
       (async () => {
         // Wait a tiny bit to ensure the window has a chance to register its listener
         await new Promise(r => setTimeout(r, 500));
-        const allClients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         for (const client of allClients) {
           client.postMessage({
             type: 'share-target',
@@ -74,7 +70,7 @@ sw.addEventListener('fetch', /** @param {FetchEvent} event */(event) => {
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      caches.match('./index.html', { ignoreSearch: true }).then((cached) => cached || sw.fetch(event.request))
+      caches.match('./index.html', { ignoreSearch: true }).then((cached) => cached || self.fetch(event.request))
     );
     return;
   }
@@ -82,6 +78,6 @@ sw.addEventListener('fetch', /** @param {FetchEvent} event */(event) => {
   if (!isSameOrigin) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || sw.fetch(event.request))
+    caches.match(event.request).then((cached) => cached || self.fetch(event.request))
   );
 });
