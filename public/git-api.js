@@ -53,7 +53,8 @@ export function init(options = {}) {
 
 /**
  * @param {{ filepath?: string; ref?: string; depth?: number; since?: Date }} options
- * @returns {Promise<Array<import('https://esm.sh/isomorphic-git').ReadCommitResult>>}
+ * @typedef {{message: string; tree: string; parent: string[]; author: {name: string; email: string; timestamp: number; timezoneOffset: number}; committer: {name: string; email: string; timestamp: number; timezoneOffset: number}}} CommitObject
+ * @returns {Promise<{oid: string; commit: CommitObject; payload: string}[]>}
  */
 export function log(options = {}) {
   const defaults = { fs, dir };
@@ -393,9 +394,7 @@ export async function getHistoryContent(oid, filepath) {
  */
 export async function logFileChanges(filepath, depth) {
   const repoPath = toRepoPath(filepath);
-  const commits = await log(
-    typeof depth === 'number' ? { filepath: repoPath, depth } : { filepath: repoPath }
-  );
+  const commits = await log({ filepath: repoPath, depth });
   /** @type {Awaited<ReturnType<typeof log>>} */
   const filtered = [];
   for (const entry of commits) {

@@ -257,23 +257,15 @@ async function loadAndRenderHistory(note) {
 
   try {
     const commits = await logFileChanges(note.path);
-    const validCommits = commits.filter(
-      (entry) => typeof entry.commit?.author?.timestamp === 'number'
-    );
-    if (!validCommits.length) {
+    if (!commits.length) {
       renderNoteHistory([], { emptyMessage: '履歴がありません' });
       return;
     }
-
-    const entries = validCommits.map((entry) => {
-      const ts = entry.commit?.author?.timestamp;
-      return {
-        oid: entry.oid,
-        label: typeof ts === 'number' ? formatUpdatedAt(ts * 1000) : entry.oid,
-      };
-    });
+    const entries = commits.map((entry) => ({
+      oid: entry.oid,
+      label: formatUpdatedAt(entry.commit.author.timestamp * 1000),
+    }));
     renderNoteHistory(entries, { emptyMessage: '履歴がありません' });
-    return;
   } catch (err) {
     renderNoteHistory([], { emptyMessage: '履歴を取得できません' });
     throw err;
@@ -423,7 +415,7 @@ async function deleteCurrentNote() {
 async function saveAndCommit(note) {
   const parsed = parseNoteBody(note.body);
   const frontMatterUpdatedAt = getNoteUpdatedAt(parsed);
-  if (typeof frontMatterUpdatedAt === 'number') {
+  if (frontMatterUpdatedAt != null) {
     note.updatedAt = frontMatterUpdatedAt;
   }
   await saveNoteFile(note);
@@ -433,7 +425,7 @@ async function saveAndCommit(note) {
   const modified = s === 'modified' || s === '*modified' || s === 'deleted' || s === '*deleted' || s === 'added' || s === '*added';
   if (modified) {
     await commit();
-    if (typeof frontMatterUpdatedAt === 'number') {
+    if (frontMatterUpdatedAt != null) {
       note.updatedAt = frontMatterUpdatedAt;
     } else {
       note.updatedAt = await getLatestCommitTimestamp(note.path);
