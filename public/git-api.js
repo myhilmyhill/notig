@@ -17,6 +17,18 @@ const author = {
 };
 
 /**
+ * @param {string} [remote]
+ * @returns {Promise<import('https://esm.sh/isomorphic-git').ServerRef[]>}
+ */
+export function getRemoteRefs(remote = 'origin') {
+  return git.listServerRefs({
+    http,
+    url,
+    prefix: 'refs/heads',
+  });
+}
+
+/**
  * @param {object} options
  * @param {string} [options.url]
  * @param {string} [options.ref]
@@ -34,7 +46,9 @@ export function clone(options = {}) {
     http,
     dir,
     url,
-    ref: 'main',
+    dir,
+    url,
+    depth: 1,
     singleBranch: true,
   };
   return git.clone({ ...defaults, ...options });
@@ -116,9 +130,18 @@ export function remove(options = {}) {
  * @param {boolean} [options.force]
  * @returns {Promise<import('https://esm.sh/isomorphic-git').PushResult>}
  */
-export function push(options = {}) {
-  const defaults = { fs, dir, http, url, remote: 'origin', ref: 'main' };
-  return git.push({ ...defaults, ...options });
+export async function push(options = {}) {
+  const defaults = { fs, dir, http, url, remote: 'origin' };
+  let ref = options.ref;
+
+  if (!ref) {
+    const branch = await git.currentBranch({ fs, dir });
+    if (branch) {
+      ref = branch;
+    }
+  }
+
+  return git.push({ ...defaults, ...options, ref });
 }
 
 /**
@@ -483,6 +506,12 @@ export async function listNoteFiles() {
         files.push({ path: toRepoPath(filePath) });
       }
     }
+  }
+
+  try {
+    await pfs.mkdir(notesDir);
+  } catch (err) {
+    if (getErrorCode(err) !== 'EEXIST') throw err;
   }
 
   await walk(notesDir);

@@ -8,10 +8,12 @@ import {
   deleteNoteFile,
   ensureConfig,
   fetch,
+  findMergeBase,
   getChangedNotePaths,
   getErrorCode,
   getHistoryContent,
-  findMergeBase,
+  getRemoteRefs,
+  init,
   isMergeConflictError,
   isPushRejectedError,
   isUnmergedPathsError,
@@ -177,7 +179,13 @@ function randomId() {
 
 async function cloneRepo() {
   if (!await ensureConfig()) {
-    await clone();
+    try {
+      await clone();
+    } catch (err) {
+      console.warn('Clone failed, falling back to init:', err);
+      // Fallback to init for any error (e.g. empty repo, missing main, etc.)
+      await init();
+    }
     await applyConfigDefaults();
     await bootstrap();
   }
@@ -446,11 +454,21 @@ async function pushChanges() {
   let conflictCommitted = false;
   try {
     setStatusUi('syncing…');
-    await fetch();
-    await merge({ abortOnConflict: false });
-    await refreshWorkingTree();
-    await loadNotes();
-    await refreshNotesList(notes);
+    try {
+      await fetch();
+    } catch (err) {
+      if (getErrorCode(err) !== 'NotFoundError' && err.message !== 'Could not find HEAD' && err.message !== 'Could not find main') {
+        throw err;
+      }
+    }
+
+    const remoteRef = await resolveRef('refs/remotes/origin/main').catch(() => null);
+    if (remoteRef) {
+      await merge({ abortOnConflict: false });
+      await refreshWorkingTree();
+      await loadNotes();
+      await refreshNotesList(notes);
+    }
   } catch (err) {
     if (isMergeConflictError(err) || isUnmergedPathsError(err)) {
       await loadNotes();
@@ -556,15 +574,48 @@ async function bootstrap() {
   setMissingConfig(false);
 
   let didLoadNotes = false;
+  // Check remote state without fetching first
   try {
-    await fetch();
+    const remoteRefs = await getRemoteRefs();
+    const hasRemoteMain = remoteRefs.some(r => r.ref === 'refs/heads/main');
+
+    if (!hasRemoteMain) {
+      const localHead = await resolveRef('refs/heads/main').catch(() => null);
+      if (!localHead) {
+        setStatusUi('initializing repo…');
+        const oid = await commit({ message: 'initial commit' });
+        // Ensure main ref exists before pushing
+        if (oid) {
+          await writeRef('refs/heads/main', oid, true);
+        }
+        await push();
+      }
+    }
   } catch (err) {
-    setStatusUi('offline (local only)');
-    throw err;
+    // If listing refs fails (e.g. offline), we'll catch it here or let fetch handle it.
+    console.warn('Failed to list remote refs, assuming offline or proceed to fetch', err);
   }
 
   try {
-    await merge();
+    await fetch();
+  } catch (err) {
+    if (getErrorCode(err) === 'NotFoundError' || err.message === 'Could not find HEAD' || err.message === 'Could not find main') {
+      // Ignore
+    } else {
+      setStatusUi('offline (local only)');
+      throw err;
+    }
+  }
+
+  try {
+    try {
+      await merge();
+    } catch (err) {
+      if (isMergeConflictError(err)) {
+        throw err;
+      }
+      console.warn('Merge failed (likely empty remote), proceeding:', err);
+    }
     await refreshWorkingTree();
     await loadNotes({
       onBatch: () => {
@@ -579,6 +630,8 @@ async function bootstrap() {
     if (isMergeConflictError(err)) {
       const committed = await commitMergeConflictMarkers();
       setStatusUi(committed ? 'merge conflict committed' : 'conflict');
+    } else {
+      throw err;
     }
   }
 
