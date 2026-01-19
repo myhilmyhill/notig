@@ -1,3 +1,68 @@
+:root {
+  /* Default Dark Theme (Slate/Gray based) */
+  --bg-body: #0f172a;
+  --bg-header: #111827;
+  --bg-sidebar: #0b1220;
+  --bg-editor: #0f172a;
+  /* Mobile editor bg default */
+  --bg-card: #111827;
+  --bg-card-active: #1f2937;
+  --bg-dialog: #0b1220;
+  --bg-input: #0b1220;
+
+  --border-color: #1f2937;
+  --border-focus: #2563eb;
+
+  --text-main: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-accent: #93c5fd;
+  --text-toolbar-title: #cbd5f5;
+
+  --btn-bg: #2563eb;
+  --btn-text: #e2e8f0;
+  --btn-hover: #1d4ed8;
+
+  --sync-status-bg: #1f2937;
+  --sync-status-text: #93c5fd;
+
+  --marker-color: #38bdf8;
+  --marker-shadow: #111827;
+  --backdrop-color: rgba(15, 23, 42, 0.75);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Light Theme */
+    --bg-body: #f8fafc;
+    --bg-header: #ffffff;
+    --bg-sidebar: #f1f5f9;
+    --bg-editor: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-active: #e2e8f0;
+    --bg-dialog: #ffffff;
+    --bg-input: #ffffff;
+
+    --border-color: #cbd5e1;
+    --border-focus: #2563eb;
+
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --text-accent: #2563eb;
+    --text-toolbar-title: #475569;
+
+    --btn-bg: #2563eb;
+    --btn-text: #ffffff;
+    --btn-hover: #1d4ed8;
+
+    --sync-status-bg: #e2e8f0;
+    --sync-status-text: #2563eb;
+
+    --marker-color: #0ea5e9;
+    --marker-shadow: #ffffff;
+    --backdrop-color: rgba(255, 255, 255, 0.75);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -5,11 +70,12 @@
 body {
   margin: 0;
   font-family: Arial, sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg-body);
+  color: var(--text-main);
   height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr;
+  transition: background 0.3s, color 0.3s;
 }
 
 body.missing-config main {
@@ -38,8 +104,9 @@ header {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: #111827;
-  border-bottom: 1px solid #1f2937;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.3s;
 }
 
 header h1 {
@@ -51,24 +118,25 @@ header h1 {
   margin-left: auto;
   padding: 4px 10px;
   border-radius: 12px;
-  background: #1f2937;
-  color: #93c5fd;
+  background: var(--sync-status-bg);
+  color: var(--sync-status-text);
   font-size: 12px;
   text-transform: lowercase;
 }
 
 button {
-  background: #2563eb;
-  color: #e2e8f0;
+  background: var(--btn-bg);
+  color: var(--btn-text);
   border: none;
   border-radius: 6px;
   padding: 8px 12px;
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.2s;
 }
 
 button:hover {
-  background: #1d4ed8;
+  background: var(--btn-hover);
 }
 
 #push-notes {
@@ -83,21 +151,21 @@ button:hover {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #38bdf8;
-  box-shadow: 0 0 0 2px #111827;
+  background: var(--marker-color);
+  box-shadow: 0 0 0 2px var(--marker-shadow);
 }
 
 dialog {
   width: min(420px, 90vw);
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-color);
   border-radius: 12px;
-  background: #0b1220;
-  color: #e2e8f0;
+  background: var(--bg-dialog);
+  color: var(--text-main);
   padding: 16px;
 }
 
 dialog::backdrop {
-  background: rgba(15, 23, 42, 0.75);
+  background: var(--backdrop-color);
 }
 
 .dialog-header {
@@ -115,7 +183,7 @@ dialog::backdrop {
 .dialog-section h3 {
   margin: 0 0 8px;
   font-size: 14px;
-  color: #93c5fd;
+  color: var(--text-accent);
 }
 
 #update-dates {
@@ -139,16 +207,16 @@ dialog::backdrop {
 #current-note-history li {
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid #1f2937;
-  background: #111827;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
   cursor: pointer;
   font-size: 13px;
   position: relative;
 }
 
 #current-note-history li.active {
-  background: #1f2937;
-  border-color: #2563eb;
+  background: var(--bg-card-active);
+  border-color: var(--border-focus);
 }
 
 main {
@@ -163,13 +231,14 @@ body:not(.has-current-note) #editor-host {
 }
 
 #sidebar {
-  border-right: 1px solid #1f2937;
-  background: #0b1220;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
   padding: 12px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  transition: background 0.3s;
 }
 
 .sidebar-section[hidden] {
@@ -192,7 +261,7 @@ body:not(.has-current-note) #editor-host {
 .notes-toolbar-title {
   font-weight: 600;
   letter-spacing: 0.2px;
-  color: #cbd5f5;
+  color: var(--text-toolbar-title);
   font-size: 13px;
   text-transform: uppercase;
 }
@@ -209,16 +278,16 @@ body:not(.has-current-note) #editor-host {
 }
 
 .notes-toolbar-actions select {
-  background: #0f172a;
-  color: #e2e8f0;
-  border: 1px solid #1f2937;
+  background: var(--bg-input);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 13px;
 }
 
 .notes-toolbar-actions select:focus {
-  outline: 2px solid #2563eb;
+  outline: 2px solid var(--border-focus);
   outline-offset: 1px;
 }
 
@@ -235,7 +304,7 @@ body:not(.has-current-note) #editor-host {
 #note-list li {
   padding: 10px 12px;
   border-radius: 8px;
-  background: #111827;
+  background: var(--bg-card);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -250,7 +319,7 @@ body:not(.has-current-note) #editor-host {
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--text-muted);
   pointer-events: none;
 }
 
@@ -268,8 +337,8 @@ body:not(.has-current-note) #editor-host {
 }
 
 #note-list li.active {
-  background: #1f2937;
-  border: 1px solid #2563eb;
+  background: var(--bg-card-active);
+  border: 1px solid var(--border-focus);
 }
 
 .note-title {
@@ -278,7 +347,7 @@ body:not(.has-current-note) #editor-host {
 
 .note-tags {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 #note-list li.has-marker::after {
@@ -286,11 +355,11 @@ body:not(.has-current-note) #editor-host {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #38bdf8;
+  background: var(--marker-color);
   position: absolute;
   right: 10px;
   top: 12px;
-  box-shadow: 0 0 0 2px #0b1220;
+  box-shadow: 0 0 0 2px var(--marker-shadow);
 }
 
 #editor {
@@ -308,9 +377,9 @@ body:not(.has-current-note) #editor-host {
 }
 
 .history-bar select {
-  background: #0b1220;
-  color: #e2e8f0;
-  border: 1px solid #1f2937;
+  background: var(--bg-input);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 13px;
@@ -319,7 +388,7 @@ body:not(.has-current-note) #editor-host {
 }
 
 .history-bar select:focus {
-  outline: 2px solid #2563eb;
+  outline: 2px solid var(--border-focus);
   outline-offset: 1px;
 }
 
@@ -332,9 +401,9 @@ body:not(.has-current-note) #editor-host {
   font-size: 18px;
   padding: 10px;
   border-radius: 8px;
-  border: 1px solid #1f2937;
-  background: #0b1220;
-  color: #e2e8f0;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-main);
 }
 
 #editor-host {
@@ -351,12 +420,15 @@ body:not(.has-current-note) #editor-host {
 
 #mobile-back {
   display: none;
-  background: #0f172a;
-  border: 1px solid #1f2937;
-  color: #e2e8f0;
+  background: var(--bg-header);
+  /* Was explicit color, but header bg seems appropriate or input bg */
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
 }
 
-@media (max-width: 1024px), (pointer: coarse) {
+@media (max-width: 1024px),
+(pointer: coarse) {
+
   html,
   body {
     width: 100%;
@@ -372,7 +444,7 @@ body:not(.has-current-note) #editor-host {
     overflow-x: auto;
   }
 
-  header > * {
+  header>* {
     flex: 0 0 auto;
   }
 
@@ -406,7 +478,7 @@ body:not(.has-current-note) #editor-host {
     position: absolute;
     inset: 0;
     padding: 12px 16px 16px;
-    background: #0f172a;
+    background: var(--bg-editor);
     transform: translateX(100%);
     transition: transform 0.2s ease;
   }
