@@ -48,7 +48,6 @@ export function clone(options = {}) {
     url,
     dir,
     url,
-    depth: 1,
     singleBranch: true,
   };
   return git.clone({ ...defaults, ...options });
