@@ -1,5 +1,3 @@
-/// <reference lib="webworker" />
-
 'use strict';
 
 const CACHE_NAME = 'notig-static-v15';
