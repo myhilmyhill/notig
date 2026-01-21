@@ -1,3 +1,4 @@
+'use strict';
 import { Editor } from '@toast-ui/editor';
 import {
   editorHostEl,

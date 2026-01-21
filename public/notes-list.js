@@ -1,3 +1,4 @@
+'use strict';
 import { getFilteredNotes, updateTagFilterOptions } from './tags.js';
 import {
   listEl,
