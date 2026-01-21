@@ -10,5 +10,12 @@
   },
   "include": [
     "*.d.ts"
-  ]
+  ],
+  "typeAcquisition": {
+    "include": [
+      "isomorphic-git",
+      "@isomorphic-git/lightning-fs",
+      "@toast-ui/editor"
+    ]
+  }
 }

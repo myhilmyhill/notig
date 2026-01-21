@@ -1,7 +1,7 @@
 'use strict';
-import LightningFS from 'https://esm.sh/@isomorphic-git/lightning-fs';
-import * as git from 'https://esm.sh/isomorphic-git';
-import http from 'https://esm.sh/isomorphic-git/http/web';
+import LightningFS from '@isomorphic-git/lightning-fs';
+import * as git from 'isomorphic-git';
+import http from 'isomorphic-git/http/web';
 
 const fs = new LightningFS('notig-fs');
 const pfs = fs.promises;
@@ -18,7 +18,7 @@ const author = {
 
 /**
  * @param {string} [remote]
- * @returns {Promise<import('https://esm.sh/isomorphic-git').ServerRef[]>}
+ * @returns {Promise<import('isomorphic-git').ServerRef[]>}
  */
 export function getRemoteRefs(remote = 'origin') {
   return git.listServerRefs({
@@ -127,7 +127,7 @@ export function remove(options = {}) {
  * @param {string} [options.ref]
  * @param {string} [options.remoteRef]
  * @param {boolean} [options.force]
- * @returns {Promise<import('https://esm.sh/isomorphic-git').PushResult>}
+ * @returns {Promise<import('isomorphic-git').PushResult>}
  */
 export async function push(options = {}) {
   const defaults = { fs, dir, http, url, remote: 'origin' };
@@ -174,7 +174,7 @@ export function pull(options = {}) {
  * @param {number} [options.depth]
  * @param {boolean} [options.relative]
  * @param {Object<string, string>} [options.headers]
- * @returns {Promise<import('https://esm.sh/isomorphic-git').FetchResult>}
+ * @returns {Promise<import('isomorphic-git').FetchResult>}
  */
 export function fetch(options = {}) {
   const defaults = {
@@ -195,7 +195,7 @@ export function fetch(options = {}) {
  * @param {boolean} [options.fastForward]
  * @param {boolean} [options.abortOnConflict]
  * @param {Object} [options.author]
- * @returns {Promise<import('https://esm.sh/isomorphic-git').MergeResult>}
+ * @returns {Promise<import('isomorphic-git').MergeResult>}
  */
 export function merge(options = {}) {
   const defaults = {
@@ -291,7 +291,7 @@ export async function getChangedNotePaths(localOid, remoteOid) {
 
 /**
  * @param {{ filepath?: string; oid?: string; }} options
- * @returns {Promise<import('https://esm.sh/isomorphic-git').ReadBlobResult>}
+ * @returns {Promise<import('isomorphic-git').ReadBlobResult>}
  */
 export function readBlob(options = {}) {
   const defaults = { fs, dir };
@@ -335,7 +335,7 @@ export function findMergeBase(options) {
 
 /**
  * @param {{ oid: string; }} options
- * @returns {Promise<import('https://esm.sh/isomorphic-git').ReadCommitResult>}
+ * @returns {Promise<import('isomorphic-git').ReadCommitResult>}
  */
 export function readCommit(options) {
   const defaults = { fs, dir };

@@ -1,4 +1,4 @@
-import { Editor } from 'https://esm.sh/@toast-ui/editor@3.2.2';
+import { Editor } from '@toast-ui/editor';
 import {
   editorHostEl,
   showEditorOnMobile,
