@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'notig-static-v15';
+const CACHE_NAME = 'notig-static-v16';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -9,6 +9,9 @@ const PRECACHE_URLS = [
   './ui.js',
   './git-api.js',
   './note-utils.js',
+  './note-editor.js',
+  './notes-list.js',
+  './tags.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',

@@ -598,25 +598,29 @@ async function bootstrap() {
     console.warn('Failed to list remote refs, assuming offline or proceed to fetch', err);
   }
 
+  let shouldMerge = false;
   try {
     await fetch();
+    shouldMerge = true;
   } catch (err) {
     if (getErrorCode(err) === 'NotFoundError' || err.message === 'Could not find HEAD' || err.message === 'Could not find main') {
       // Ignore
     } else {
       setStatusUi('offline (local only)');
-      throw err;
+      console.warn('Fetch failed, proceeding offline:', err);
     }
   }
 
   try {
-    try {
-      await merge();
-    } catch (err) {
-      if (isMergeConflictError(err)) {
-        throw err;
+    if (shouldMerge) {
+      try {
+        await merge();
+      } catch (err) {
+        if (isMergeConflictError(err)) {
+          throw err;
+        }
+        console.warn('Merge failed (likely empty remote), proceeding:', err);
       }
-      console.warn('Merge failed (likely empty remote), proceeding:', err);
     }
     await refreshWorkingTree();
     await loadNotes({
@@ -626,8 +630,10 @@ async function bootstrap() {
     });
     await refreshNotesList(notes);
     didLoadNotes = true;
-    const committed = await commitMergeConflictMarkers();
-    setStatusUi(committed ? 'merge conflict committed' : 'synced');
+    if (shouldMerge) {
+      const committed = await commitMergeConflictMarkers();
+      setStatusUi(committed ? 'merge conflict committed' : 'synced');
+    }
   } catch (err) {
     if (isMergeConflictError(err)) {
       const committed = await commitMergeConflictMarkers();
