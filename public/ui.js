@@ -36,6 +36,8 @@ export const pullBtn = getRequiredElement('pull-notes');
 /** @type {HTMLButtonElement} */
 export const resetBtn = getRequiredElement('reset-notes');
 /** @type {HTMLButtonElement} */
+export const exportBundleBtn = getRequiredElement('export-bundle');
+/** @type {HTMLButtonElement} */
 export const emptyCloneBtn = getRequiredElement('empty-clone');
 /** @type {HTMLButtonElement} */
 export const deleteBtn = getRequiredElement('delete');

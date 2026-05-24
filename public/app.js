@@ -5,6 +5,7 @@ import {
   clone,
   commit,
   commitMergeConflictMarkers,
+  createGitBundle,
   deleteNoteFile,
   ensureConfig,
   fetch,
@@ -49,6 +50,7 @@ import {
   colorSchemeMedia,
   deleteBtn,
   emptyCloneBtn,
+  exportBundleBtn,
   historySelectEl,
   isMobileLayout,
   mobileBackBtn,
@@ -658,6 +660,33 @@ function handleCloneAction() {
   cloneRepo();
 }
 
+async function handleExportBundle() {
+  try {
+    const bundleUint8 = await createGitBundle((status) => {
+      setStatusUi(status);
+    });
+
+    const timestamp = Temporal.Now.plainDateTimeISO().toString().split('.')[0].replace(/[-:]/g, '').replace('T', '_');
+    const filename = `notig-${timestamp}.bundle`;
+
+    const blob = new Blob([bundleUint8], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setStatusUi('bundle exported');
+  } catch (err) {
+    console.error('Failed to export bundle:', err);
+    setStatusUi('export failed');
+    alert(`Export failed: ${err.message}`);
+  }
+}
+
 pushBtn.addEventListener('click', () => {
   pushChanges();
 });
@@ -668,6 +697,10 @@ pullBtn.addEventListener('click', () => {
 
 resetBtn.addEventListener('click', () => {
   resetNotesToOrigin();
+});
+
+exportBundleBtn.addEventListener('click', () => {
+  handleExportBundle();
 });
 
 if (emptyCloneBtn) {

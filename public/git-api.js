@@ -678,3 +678,66 @@ export async function resetToRemote() {
 export async function refreshWorkingTree() {
   await git.checkout({ fs, dir, ref: 'main', force: true });
 }
+
+export async function createGitBundle(onProgress) {
+  if (onProgress) onProgress('resolving branch…');
+  const branchName = await git.currentBranch({ fs, dir });
+  const ref = `refs/heads/${branchName}`;
+  const oid = await git.resolveRef({ fs, dir, ref });
+
+  if (onProgress) onProgress('counting commits…');
+  const oids = new Set();
+  const commits = await git.log({
+    fs,
+    dir,
+    ref
+  });
+
+  let index = 0;
+  for (const entry of commits) {
+    index++;
+    if (onProgress) {
+      const percentage = Math.round((index / commits.length) * 100);
+      onProgress(`collecting objects (${percentage}%)`);
+    }
+    oids.add(entry.oid);
+    if (entry.commit?.tree) {
+      oids.add(entry.commit.tree);
+    }
+
+    // Walk the entire tree at this commit to find all nested trees and blobs
+    await git.walk({
+      fs,
+      dir,
+      trees: [git.TREE({ ref: entry.oid })],
+      map: async (filepath, [treeEntry]) => {
+        if (treeEntry) {
+          const treeOid = await treeEntry.oid();
+          if (treeOid) {
+            oids.add(treeOid);
+          }
+        }
+        return filepath;
+      }
+    });
+  }
+
+  if (onProgress) onProgress('generating packfile…');
+  const { packfile } = await git.packObjects({
+    fs,
+    dir,
+    oids: Array.from(oids),
+    write: false
+  });
+
+  const header = `# v2 git bundle\n${oid} ${ref}\n\n`;
+  const encoder = new TextEncoder();
+  const headerUint8 = encoder.encode(header);
+
+  // 5. Concatenate header and packfile
+  const bundleUint8 = new Uint8Array(headerUint8.byteLength + packfile.byteLength);
+  bundleUint8.set(headerUint8, 0);
+  bundleUint8.set(packfile, headerUint8.byteLength);
+
+  return bundleUint8;
+}
